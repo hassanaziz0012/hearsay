@@ -32,14 +32,19 @@ func (a *app) diagnose() error {
 	fmt.Fprintf(&b, "keyboard: %s\n%s\n", a.cfg.Keyboard, info)
 
 	prev, _ := a.shell(8*time.Second, "settings get secure default_input_method")
-	if prev == a.cfg.Keyboard {
-		prev = ""
+	// Bring up the keyboard in the dictation field; put the phone back afterwards.
+	if _, rc := a.shell(10*time.Second, "input keyevent KEYCODE_WAKEUP; ime set "+shellQuote(a.cfg.Keyboard)+
+		" >/dev/null && am start -W -n "+activity+" --ez clear true >/dev/null"); rc != 0 {
+		return a.fail("couldn't open the dictation field")
 	}
-	writeState(state{prev, "1", "calibrating"})
-	defer a.restore()
-	if _, rc := a.phone(calibratePhone, 10*time.Second); rc != 0 {
-		return a.fail("keyboard didn't come up")
-	}
+	defer func() {
+		restore := "am start -n " + activity + " --ez clear true >/dev/null; input keyevent KEYCODE_HOME"
+		if prev != "" && prev != "null" && prev != a.cfg.Keyboard {
+			restore += "; ime set " + shellQuote(prev) + " >/dev/null"
+		}
+		a.shell(10*time.Second, restore)
+	}()
+	time.Sleep(1500 * time.Millisecond) // the keyboard slides in
 	dump := func(title string) {
 		fmt.Println("Reading the keyboard (takes a few seconds)…")
 		const f = "/sdcard/hearsay-ui.xml"

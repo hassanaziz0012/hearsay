@@ -8,29 +8,23 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
 
-// config is config.json in configDir(). Written by setup and calibrate; people may edit it.
+// config is config.json in configDir(). Written by setup and pair; people may edit it.
 type config struct {
 	// IME component of the keyboard that has Rambler, e.g.
 	// com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME.
 	Keyboard string `json:"keyboard"`
-	// Mic key centre on the phone screen. Only used when the app's accessibility service
-	// can't press the key (written by calibrate).
-	Mic *[2]int `json:"mic,omitempty"`
 	// Global hotkey for `hearsay run`, e.g. "ctrl+alt+space"; "none" for no hotkey.
 	Hotkey string `json:"hotkey,omitempty"`
-	// adb serial of the phone, when more than one device is connected.
+	// adb serial of the phone, when more than one device is connected (setup, diagnose).
 	Serial string `json:"serial,omitempty"`
 	// false: copy to the clipboard only, don't send Ctrl+V.
 	Paste *bool `json:"paste,omitempty"`
-	// How to reach the phone: "adb" (the default) or "net" (needs `hearsay pair`).
-	Transport string `json:"transport,omitempty"`
-	// The phone paired for the network transport, written by `hearsay pair`.
+	// The paired phone, written by `hearsay pair` (and setup).
 	Phone *pairedPhone `json:"phone,omitempty"`
 }
 
@@ -55,7 +49,7 @@ func configDir() string {
 
 func configPath() string { return filepath.Join(configDir(), "config.json") }
 
-// runDir holds the state of the current dictation, the tray status, the lock and the log.
+// runDir holds the tray status, the lock and the log.
 // On Linux that's $XDG_RUNTIME_DIR (cleared at logout), elsewhere the cache dir.
 func runDir() string {
 	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
@@ -100,7 +94,7 @@ func saveConfig(c config) error {
 }
 
 // migrateConfig reads the bash prototype's config (~/.config/rambler-pc): "keyboard" holds
-// the IME component (Pixelboard when absent), "mic" the calibrated "x y".
+// the IME component (Pixelboard when absent).
 func migrateConfig() (config, bool) {
 	d, err := os.UserConfigDir()
 	if err != nil {
@@ -116,42 +110,8 @@ func migrateConfig() (config, bool) {
 			c.Keyboard = k
 		}
 	}
-	if b, err := os.ReadFile(filepath.Join(old, "mic")); err == nil {
-		if f := strings.Fields(string(b)); len(f) == 2 {
-			x, err1 := strconv.Atoi(f[0])
-			y, err2 := strconv.Atoi(f[1])
-			if err1 == nil && err2 == nil {
-				c.Mic = &[2]int{x, y}
-			}
-		}
-	}
 	return c, true
 }
-
-// state is the dictation in progress, kept in a file because each press may be a new
-// process. It is deleted only once the phone has been put back, so a press after a crash
-// or an adb drop can finish the job.
-type state struct {
-	prev  string // keyboard to switch back to; empty when start didn't switch
-	awake string // "1" if the screen was on before start, "0" to put it back to sleep
-	phase string // "starting", "listening" or "calibrating"
-}
-
-// The file has one field per line, in the order of the struct.
-func readState() (state, bool) {
-	b, err := os.ReadFile(runFile("state"))
-	if err != nil {
-		return state{}, false
-	}
-	l := append(strings.Split(string(b), "\n"), "", "", "")
-	return state{l[0], l[1], l[2]}, true
-}
-
-func writeState(s state) error {
-	return writeAtomic(runFile("state"), []byte(s.prev+"\n"+s.awake+"\n"+s.phase+"\n"))
-}
-
-func removeState() { os.Remove(runFile("state")) }
 
 // status tells the tray what the last press is doing: "idle", "busy", "listening",
 // "error", or "retry" (an error the next press recovers from), a tab, and a message.

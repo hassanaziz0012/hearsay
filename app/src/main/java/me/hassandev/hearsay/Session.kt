@@ -14,8 +14,9 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * One dictation at a time, run for PhoneServer's requests: the in-app version of the adb
- * scripts in cmd/hearsay/phone (start.sh, stop.sh, restore.sh), with the same timings.
+ * One dictation at a time, run for PhoneServer's requests: open the field, switch to the
+ * keyboard with Rambler, press its mic key; on stop, wait for the text to settle; then put
+ * the phone back.
  *
  * The phone owns the session (the keyboard to go back to, whether the screen was on), so a
  * dropped connection loses nothing: the next press asks what state it is in. It is also

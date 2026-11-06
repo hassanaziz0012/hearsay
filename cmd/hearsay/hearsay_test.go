@@ -13,17 +13,6 @@ import (
 	"time"
 )
 
-// The phone scripts used to live in single-quoted bash strings; keep them free of
-// apostrophes so they can be pasted into a shell for debugging.
-func TestPhoneScriptsHaveNoApostrophes(t *testing.T) {
-	for name, s := range map[string]string{"lib": phoneLib, "start": startPhone, "stop": stopPhone,
-		"restore": restorePhone, "calibrate": calibratePhone} {
-		if strings.Contains(s, "'") {
-			t.Errorf("phone/%s.sh contains an apostrophe", name)
-		}
-	}
-}
-
 func TestShellQuote(t *testing.T) {
 	if got := shellQuote("it's"); got != `'it'\''s'` {
 		t.Errorf("got %s", got)
@@ -39,27 +28,13 @@ func TestMigrateConfig(t *testing.T) {
 	}
 	old := filepath.Join(home, "rambler-pc")
 	os.MkdirAll(old, 0o755)
-	os.WriteFile(filepath.Join(old, "mic"), []byte("1020 1520\n"), 0o644)
 	c, ok := migrateConfig()
-	if !ok || c.Keyboard != pixelboard || c.Mic == nil || *c.Mic != [2]int{1020, 1520} {
+	if !ok || c.Keyboard != pixelboard {
 		t.Fatalf("got %+v", c)
 	}
 	os.WriteFile(filepath.Join(old, "keyboard"), []byte("a.b/.C\n"), 0o644)
 	if c, _ := migrateConfig(); c.Keyboard != "a.b/.C" {
 		t.Fatalf("keyboard %q", c.Keyboard)
-	}
-}
-
-func TestStateRoundTrip(t *testing.T) {
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-	os.MkdirAll(runDir(), 0o700)
-	if _, ok := readState(); ok {
-		t.Fatal("state before writing")
-	}
-	want := state{"", "0", "starting"}
-	writeState(want)
-	if got, ok := readState(); !ok || got != want {
-		t.Fatalf("got %+v", got)
 	}
 }
 

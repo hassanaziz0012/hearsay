@@ -21,18 +21,15 @@ import android.view.WindowManager
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
-import java.io.File
 import java.lang.ref.WeakReference
 
 /**
  * Dictation screen for Rambler to type into, styled after M3 Expressive: a status mark that
  * morphs between shapes, a headline + supporting line, and the text field in a container.
- * Every change is mirrored to files/out.txt (text) and files/out.ts (last-change time in
- * ms, a space, the text's length), which the PC side reads through OutReceiver over adb,
- * and to [text] and [changedAt] for Session over the network.
+ * Every change is mirrored to [text] and [changedAt] for Session.
  *
  * "Listening" means something is recording for voice recognition (Rambler, in practice),
- * from AudioManager's recording callback, so the script doesn't have to tell us.
+ * from AudioManager's recording callback, so Session doesn't have to tell us.
  *
  * Extras: `clear` (boolean) empties the field.
  */
@@ -137,7 +134,7 @@ class DictateActivity : Activity() {
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun afterTextChanged(s: Editable?) {
-                    writeOut(s?.toString().orEmpty())
+                    textChanged(s?.toString().orEmpty())
                     updateState()
                 }
             })
@@ -185,7 +182,7 @@ class DictateActivity : Activity() {
     private fun handle(intent: Intent) {
         if (intent.getBooleanExtra("clear", false)) field.setText("")
         // setText("") on an already-empty field doesn't fire the watcher.
-        writeOut(field.text.toString())
+        textChanged(field.text.toString())
         updateState()
         showKeyboard()
     }
@@ -232,17 +229,9 @@ class DictateActivity : Activity() {
         field.post { field.windowInsetsController?.show(WindowInsets.Type.ime()) }
     }
 
-    private fun writeOut(text: String) {
+    private fun textChanged(text: String) {
         Companion.text = text
         changedAt = System.currentTimeMillis()
-        atomicWrite("out.txt", text)
-        atomicWrite("out.ts", "${System.currentTimeMillis()} ${text.length}")
-    }
-
-    private fun atomicWrite(name: String, content: String) {
-        val tmp = File(filesDir, "$name.tmp")
-        tmp.writeText(content)
-        tmp.renameTo(File(filesDir, name))
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()

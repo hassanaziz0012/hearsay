@@ -14,7 +14,7 @@ import (
 )
 
 // pairPhone is `hearsay pair [ADDRESS]` and `hearsay pair --forget`: pairing with the phone
-// for the network transport. The phone has to show the Hearsay app while pairing; both
+// for dictation. The phone has to show the Hearsay app while pairing; both
 // sides then show a 6-digit code and the user confirms on the phone that they match.
 func (a *app) pairPhone(args []string) error {
 	if len(args) > 0 && args[0] == "--forget" {
@@ -24,14 +24,7 @@ func (a *app) pairPhone(args []string) error {
 	if len(args) > 0 {
 		addr = args[0]
 	}
-	if err := a.pairNet(addr, ""); err != nil {
-		return err
-	}
-	if a.cfg.Transport != "net" {
-		say("Dictation still goes over adb. To use the network connection instead, set")
-		say(`"transport": "net" in %s, or try it once with HEARSAY_TRANSPORT=net hearsay toggle.`, configPath())
-	}
-	return nil
+	return a.pairNet(addr, "")
 }
 
 // pairNet pairs with the phone at addr (port optional), or else the one mDNS finds, or else
@@ -148,10 +141,6 @@ func (a *app) forgetPhone() error {
 		say("Couldn't reach the phone (%v). Remove this computer in the Hearsay app there.", err)
 	}
 	a.cfg.Phone = nil
-	if a.cfg.Transport == "net" {
-		a.cfg.Transport = ""
-		say("Dictation goes over adb again.")
-	}
 	if err := saveConfig(a.cfg); err != nil {
 		return err
 	}

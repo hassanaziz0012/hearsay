@@ -129,15 +129,14 @@ func (a *app) setupServiceManual() (string, error) {
 
 // 3. Pair (both paths)
 
-// setupPair pairs with the phone for dictation over the network, unless it already is,
-// and switches dictation to it. With adb, setup opens the app on the phone itself and
+// setupPair pairs with the phone for dictation, unless it already is. With adb, setup opens the app on the phone itself and
 // knows the phone's address in case mDNS doesn't find it.
 func (a *app) setupPair(viaAdb bool, addr string) error {
 	if p := a.cfg.Phone; p != nil {
 		err := a.pingPhone()
 		if err == nil {
 			done("paired with %s", p.Name)
-			return a.useNet()
+			return nil
 		}
 		say("Paired with %s before, but that doesn't work now (%v). Pairing again.", p.Name, err)
 	}
@@ -147,10 +146,7 @@ func (a *app) setupPair(viaAdb bool, addr string) error {
 		say("Setup opened the Hearsay app on the phone. Unlock the phone if it's locked.")
 		guess = a.phoneIP()
 	}
-	if err := a.pairNet(addr, guess); err != nil {
-		return err
-	}
-	return a.useNet()
+	return a.pairNet(addr, guess)
 }
 
 // pingPhone checks that the paired phone answers and still knows this computer.
@@ -167,18 +163,6 @@ func (a *app) pingPhone() error {
 	if !r.OK {
 		return errors.New(r.Msg)
 	}
-	return nil
-}
-
-func (a *app) useNet() error {
-	if a.cfg.Transport == "net" {
-		return nil
-	}
-	a.cfg.Transport = "net"
-	if err := saveConfig(a.cfg); err != nil {
-		return err
-	}
-	done("dictation goes over the network from now on, without adb")
 	return nil
 }
 

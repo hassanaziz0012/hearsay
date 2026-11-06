@@ -30,8 +30,8 @@
             </intent-filter>
         </activity>
 
-        <!-- Launched by the PC side (over adb, or by KeyPressService for the network
-             connection). Exported for adb's `am start`. singleTask so a relaunch reuses the
+        <!-- Launched by Session (in KeyPressService). Exported for `hearsay diagnose`, which
+             opens it with adb's `am start`. singleTask so a relaunch reuses the
              same field (onNewIntent) instead of stacking activities. -->
         <activity
             android:name=".DictateActivity"
@@ -55,15 +55,5 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/key_press_service" />
         </service>
-
-        <!-- Dictated text for the PC side. DUMP is held by the adb shell, not by apps. -->
-        <receiver
-            android:name=".OutReceiver"
-            android:exported="true"
-            android:permission="android.permission.DUMP">
-            <intent-filter>
-                <action android:name="me.hassandev.hearsay.OUT" />
-            </intent-filter>
-        </receiver>
     </application>
 </manifest>

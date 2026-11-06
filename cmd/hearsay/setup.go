@@ -474,11 +474,10 @@ func (a *app) setupInstall(apkFile string) error {
 
 // 4. Service
 
-// serviceOn asks the key presser for a key it doesn't know: it answers 3, while a missing
-// receiver (service off) leaves the result at 0. Nothing is pressed.
+// serviceOn reports whether the system has the key presser running (bound).
 func (a *app) serviceOn() bool {
-	out, _ := a.shell(5*time.Second, "am broadcast -a "+pkg+".PRESS -p "+pkg+" --es key probe")
-	return strings.Contains(out, "result=3")
+	out, _ := a.shell(5*time.Second, "dumpsys activity services "+pkg+"/.KeyPressService")
+	return strings.Contains(out, "ServiceRecord{")
 }
 
 func (a *app) waitService(d time.Duration) bool {

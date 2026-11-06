@@ -2,10 +2,6 @@ package me.hassandev.hearsay
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.Path
 import android.graphics.Rect
 import android.view.accessibility.AccessibilityEvent
@@ -18,19 +14,10 @@ import android.view.accessibility.AccessibilityWindowInfo
  * the PC's network connection: the system keeps a bound accessibility service's process at
  * foreground priority, which keeps the socket reachable in Doze (CONNECTION-HANDOFF.md).
  *
- * Over adb, the PC presses keys with
+ * Session presses "mic" (the voice typing key, "Insert text" while Rambler listens) and
+ * "close" (the left header key, which reads "Close Rambler" while it listens) of the
+ * keyboard that has Rambler (stock Gboard or a Gboard build like Pixelboard).
  *
- *   adb shell am broadcast -a me.hassandev.hearsay.PRESS \
- *       -p me.hassandev.hearsay --es key mic|close --es ime <keyboard package>
- *
- * "mic" is the voice typing key ("Insert text" while Rambler listens), "close" is the left
- * header key, which reads "Close Rambler" while it listens. `ime` is the package of the
- * keyboard that has Rambler (stock Gboard or a Gboard build like Pixelboard). The broadcast
- * result says what happened: 1 pressed, 2 key not on screen (keyboard not up, or still
- * sliding in), 3 unknown key. No receiver (result 0) means this service is off. With
- * result 2 the data says why, for debugging.
- *
- * Only holders of android.permission.DUMP (the adb shell, not other apps) can send it.
  * The service reads windows only when asked; it ignores accessibility events.
  */
 class KeyPressService : AccessibilityService() {
@@ -38,20 +25,7 @@ class KeyPressService : AccessibilityService() {
     var server: PhoneServer? = null
         private set
 
-    private val receiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val result = goAsync()
-            press(intent.getStringExtra("key") ?: "mic", intent.getStringExtra("ime") ?: DEFAULT_IME) { code, why ->
-                result.resultCode = code
-                result.resultData = why
-                result.finish()
-            }
-        }
-    }
-
     override fun onServiceConnected() {
-        registerReceiver(receiver, IntentFilter(ACTION), android.Manifest.permission.DUMP,
-            null, Context.RECEIVER_EXPORTED)
         instance = this
         server = PhoneServer(this).also { it.start() }
     }
@@ -59,7 +33,6 @@ class KeyPressService : AccessibilityService() {
     override fun onDestroy() {
         instance = null
         server?.stop()
-        unregisterReceiver(receiver)
         super.onDestroy()
     }
 
@@ -106,8 +79,6 @@ class KeyPressService : AccessibilityService() {
         var instance: KeyPressService? = null
             private set
 
-        private const val ACTION = "me.hassandev.hearsay.PRESS"
-        private const val DEFAULT_IME = "com.google.android.inputmethod.latin"
 
         // Resource ids (without the package prefix) of each keyboard's keys. Pixelboard is
         // repackaged Gboard, so it shares Gboard's ids; any other package is assumed to be a

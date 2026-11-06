@@ -1,6 +1,7 @@
 // Command hearsay dictates on an Android phone with Rambler (Gboard's AI voice typing)
-// and pastes the text on the PC. The phone sits on the desk and is driven over adb; the
-// helper app in app/ provides the text field and presses the keyboard's keys.
+// and pastes the text on the PC. The phone sits on the desk; the helper app in app/
+// provides the text field, presses the keyboard's keys and talks to the PC over the local
+// network (net.go). adb is only used by setup and diagnose.
 package main
 
 import (
@@ -18,17 +19,15 @@ const usage = `hearsay: dictate with Rambler on the phone, paste on the PC.
   hearsay start|stop force one half of the toggle
   hearsay cancel     close Rambler without pasting
   hearsay run        tray icon and global hotkey (keeps running)
-  hearsay calibrate  find the mic key's position on the phone and save it
   hearsay setup      guided setup: app, phone, keyboard, test, hotkey. Asks whether to
                      use adb (--adb, does most of it) or not (--no-adb, by hand);
                      --apk FILE installs that APK over adb instead of the bundled one
   hearsay diagnose   save the keyboard's key ids to hearsay-diagnose.txt (for bug reports)
-  hearsay pair [ADDRESS]  pair with the phone for the network connection (no adb)
+  hearsay pair [ADDRESS]  pair with the phone (no adb needed)
   hearsay pair --forget   forget the paired phone
 
-Env: HEARSAY_SERIAL (pick a device), HEARSAY_PASTE=0 (copy only, no Ctrl+V),
-     HEARSAY_DEBUG=1 (timings on stderr), HEARSAY_TRANSPORT=adb|net (overrides the
-     config's "transport").
+Env: HEARSAY_SERIAL (pick an adb device), HEARSAY_PASTE=0 (copy only, no Ctrl+V),
+     HEARSAY_DEBUG=1 (timings on stderr).
 `
 
 const (
@@ -63,7 +62,7 @@ func main() {
 		cmd = os.Args[1]
 	}
 	switch cmd {
-	case "toggle", "start", "stop", "cancel", "calibrate", "run", "setup", "diagnose", "pair":
+	case "toggle", "start", "stop", "cancel", "run", "setup", "diagnose", "pair":
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return
@@ -86,8 +85,6 @@ func main() {
 			err = a.action(func() error { return a.stop(true) })
 		case "cancel":
 			err = a.action(func() error { return a.stop(false) })
-		case "calibrate":
-			err = a.action(a.calibrate)
 		case "diagnose":
 			err = a.action(a.diagnose)
 		case "run":
@@ -139,10 +136,8 @@ func newApp(cmd string) (*app, error) {
 		a.paste = false
 	}
 	a.adbPath, err = findAdb()
-	// setup finds or downloads it; the network transport doesn't need it.
-	needsAdb := cmd == "calibrate" || cmd == "diagnose" ||
-		(cmd != "setup" && cmd != "pair" && a.transportName() == "adb")
-	if !needsAdb && errors.Is(err, errNoAdb) {
+	// Only diagnose needs it; setup finds or downloads it if the user picks the adb path.
+	if cmd != "diagnose" && errors.Is(err, errNoAdb) {
 		err = nil
 	}
 	return a, err
@@ -170,15 +165,11 @@ func (a *app) logf(format string, args ...any) {
 	}
 }
 
-// fail tells the user about an error and returns it as reported. If the state file is
-// still there, the next press can recover, which the tray shows as "retry".
-func (a *app) fail(msg string) error {
-	_, retry := readState()
-	return a.failAs(msg, retry)
-}
+// fail tells the user about an error and returns it as reported.
+func (a *app) fail(msg string) error { return a.failAs(msg, false) }
 
-// failAs is fail with the "retry" status chosen by the caller (the network transport,
-// which has no state file).
+// failAs is fail with a "retry" status in the tray when retry is set: the next press can
+// finish what this one couldn't.
 func (a *app) failAs(msg string, retry bool) error {
 	fmt.Fprintln(a.log, "hearsay:", msg)
 	a.notify("Error: "+msg, 5000, true)

@@ -3,30 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
-	_ "embed"
 	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
-)
-
-// The scripts that run on the phone; see phone/lib.sh.
-var (
-	//go:embed phone/lib.sh
-	phoneLib string
-	//go:embed phone/start.sh
-	startPhone string
-	//go:embed phone/stop.sh
-	stopPhone string
-	//go:embed phone/restore.sh
-	restorePhone string
-	//go:embed phone/calibrate.sh
-	calibratePhone string
 )
 
 func adbName() string {
@@ -115,41 +99,7 @@ func (a *app) requireDevice() error {
 	if a.connected() {
 		return nil
 	}
-	if _, ok := readState(); ok {
-		return a.fail("phone not connected over adb. Reconnect, then press again")
-	}
 	return a.fail("phone not connected over adb")
 }
 
-// phone runs script on the phone (after phone/lib.sh) with the common variables and the
-// given name/value pairs set, and returns its stdout and exit code.
-func (a *app) phone(script string, timeout time.Duration, vars ...string) (string, int) {
-	x, y := "", ""
-	if m := a.cfg.Mic; m != nil {
-		x, y = strconv.Itoa(m[0]), strconv.Itoa(m[1])
-	}
-	d := "0"
-	if a.debug {
-		d = "1"
-	}
-	vars = append([]string{"IME", a.cfg.Keyboard, "PKG", pkg, "ACT", activity, "X", x, "Y", y, "D", d}, vars...)
-	var sb strings.Builder
-	for i := 0; i+1 < len(vars); i += 2 {
-		sb.WriteString(vars[i] + "=" + shellQuote(vars[i+1]) + " ")
-	}
-	sb.WriteString(";\n" + phoneLib + script)
-	return a.adb(timeout, "shell", sb.String())
-}
-
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-
-// adbFailed handles a failed phone script (exit code rc): nil if the script itself failed
-// (codes 10-19) and the phone is still there, so the caller reports what went wrong.
-// Otherwise adb failed: report msg and keep the state file, so the next press can finish
-// the job once the phone is back.
-func (a *app) adbFailed(rc int, msg string) error {
-	if rc >= 10 && rc < 20 && a.connected() {
-		return nil
-	}
-	return a.fail(msg + ". Reconnect, then press again")
-}
