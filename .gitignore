@@ -6,3 +6,6 @@ keystore.properties
 *.jks
 *.keystore
 bin/
+
+# Internal dev notes
+*HANDOFF.md
