@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Hearsay</string>
+    <string name="key_press_service_label">Hearsay key presser</string>
+    <string name="key_press_service_description">Lets Hearsay on your computer press the voice typing key on your keyboard (Gboard with Rambler). It only looks at the keyboard when the computer asks it to press a key.</string>
+</resources>
