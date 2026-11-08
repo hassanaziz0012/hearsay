@@ -10,6 +10,14 @@ import (
 
 var registered []*hotkey.Hotkey // unregistered when garbage collected, so keep them
 
+// unregisterHotkeys drops the hotkeys registered so far (before registering a new one).
+func unregisterHotkeys() {
+	for _, hk := range registered {
+		hk.Unregister()
+	}
+	registered = nil
+}
+
 func registerHotkey(mods []string, key string, fn func()) error {
 	var ms []hotkey.Modifier
 	for _, m := range mods {

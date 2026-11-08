@@ -4,11 +4,10 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"os"
 	"runtime"
 	"time"
 
-	"fyne.io/systray"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 //go:generate sh icons/gen.sh
@@ -36,81 +35,78 @@ var trayStates = map[string]trayState{
 	"retry": {"error", "Reconnect the phone", "Finish (press again)", false},
 }
 
-// runTray shows the state of the last press (from the status file, so presses from a
-// desktop shortcut show up too) and runs presses from its menu and the global hotkey.
-func (a *app) runTray() error {
-	systray.Run(a.trayReady, nil)
-	return nil
+// tray is the tray icon and its menu. It shows the state of the last press (from the
+// status file, so presses from a desktop shortcut show up too) and runs presses.
+type tray struct {
+	icon                          *application.SystemTray
+	menu                          *application.Menu
+	label, detail, hotkey, toggle *application.MenuItem
+	cancel                        *application.MenuItem
 }
 
-func (a *app) trayReady() {
-	systray.SetTitle("Hearsay")
-	label := systray.AddMenuItem("Ready", "")
-	label.Disable()
-	detail := systray.AddMenuItem("", "")
-	detail.Disable()
-	detail.Hide()
-	systray.AddSeparator()
-	toggle := systray.AddMenuItem("Start dictation", "")
-	cancel := systray.AddMenuItem("Cancel", "")
-	cancel.Hide()
-	systray.AddSeparator()
-	quit := systray.AddMenuItem("Quit Hearsay", "")
-
-	go func() {
-		for {
-			select {
-			case <-toggle.ClickedCh:
-				go a.trayAction(a.toggle)
-			case <-cancel.ClickedCh:
-				go a.trayAction(func() error { return a.stop(false) })
-			case <-quit.ClickedCh:
-				systray.Quit()
-				return
-			}
-		}
-	}()
-	a.startHotkey()
-
-	show := func(st, msg string) {
-		s := trayStates[st]
-		lbl := s.label
-		if st == "busy" && msg != "" { // "Starting…" / "Finishing…"
-			lbl, msg = msg, ""
-		}
-		setTrayIcon(s.icon)
-		systray.SetTooltip("Hearsay: " + lbl)
-		label.SetTitle(lbl)
-		detail.SetTitle(msg)
-		if msg != "" {
-			detail.Show()
-		} else {
-			detail.Hide()
-		}
-		if s.toggle != "" {
-			toggle.SetTitle(s.toggle)
-			toggle.Enable()
-		} else {
-			toggle.SetTitle("Start dictation")
-			toggle.Disable()
-		}
-		if s.cancel {
-			cancel.Show()
-		} else {
-			cancel.Hide()
-		}
+func (g *gui) newTray() *tray {
+	t := &tray{icon: g.wails.SystemTray.New(), menu: application.NewMenu()}
+	t.label = t.menu.Add("Ready").SetEnabled(false)
+	t.detail = t.menu.Add("").SetEnabled(false).SetHidden(true)
+	t.hotkey = t.menu.Add("").SetEnabled(false)
+	t.menu.AddSeparator()
+	t.toggle = t.menu.Add("Start dictation").OnClick(func(*application.Context) {
+		go g.a.trayAction(g.a.toggle)
+	})
+	t.cancel = t.menu.Add("Cancel").SetHidden(true).OnClick(func(*application.Context) {
+		go g.a.trayAction(func() error { return g.a.stop(false) })
+	})
+	t.menu.AddSeparator()
+	t.menu.Add("Open Hearsay").OnClick(func(*application.Context) { g.show() })
+	t.menu.Add("Quit Hearsay").OnClick(func(*application.Context) { g.wails.Quit() })
+	t.icon.SetMenu(t.menu)
+	if runtime.GOOS != "darwin" { // macOS shows the label next to the icon; the icon is enough
+		t.icon.SetLabel("Hearsay")
 	}
-	go func() {
-		shown := ""
-		for {
-			st, msg := trayDisplay()
-			if st+"\t"+msg != shown {
-				shown = st + "\t" + msg
-				show(st, msg)
-			}
-			time.Sleep(200 * time.Millisecond)
+	t.icon.OnDoubleClick(g.show)
+	t.setIcon("mic")
+	return t
+}
+
+// show puts the state of the last press (st and msg from trayDisplay) in the tray.
+func (t *tray) show(st, msg string) {
+	s := trayStates[st]
+	lbl := s.label
+	if st == "busy" && msg != "" { // "Starting…" / "Finishing…"
+		lbl, msg = msg, ""
+	}
+	t.setIcon(s.icon)
+	t.icon.SetTooltip("Hearsay: " + lbl)
+	t.label.SetLabel(lbl)
+	t.detail.SetLabel(msg).SetHidden(msg == "")
+	if s.toggle != "" {
+		t.toggle.SetLabel(s.toggle).SetEnabled(true)
+	} else {
+		t.toggle.SetLabel("Start dictation").SetEnabled(false)
+	}
+	t.cancel.SetHidden(!s.cancel)
+}
+
+// The item setters update the tray's menu themselves: menu.Update() would rebuild it as a
+// window menu, and on Linux the tray then no longer sees the changes.
+func (t *tray) setHotkey(line string) { t.hotkey.SetLabel(line) }
+
+func (t *tray) setIcon(name string) {
+	read := func(f string) []byte {
+		b, err := icons.ReadFile("icons/" + f)
+		if err != nil {
+			panic(err) // embedded: can't happen
 		}
-	}()
+		return b
+	}
+	switch {
+	case runtime.GOOS == "windows":
+		t.icon.SetIcon(read(name + ".ico"))
+	case runtime.GOOS == "darwin" && name != "listening":
+		t.icon.SetTemplateIcon(read(name + "-template.png"))
+	default:
+		t.icon.SetIcon(read(name + ".png"))
+	}
 }
 
 // trayDisplay is what the tray should show for the status file now.
@@ -131,24 +127,5 @@ func (a *app) trayAction(fn func() error) {
 		if !errors.As(err, &r) {
 			fmt.Fprintln(a.log, "hearsay:", err)
 		}
-	}
-}
-
-func setTrayIcon(name string) {
-	read := func(f string) []byte {
-		b, err := icons.ReadFile("icons/" + f)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "hearsay:", err)
-		}
-		return b
-	}
-	switch {
-	case runtime.GOOS == "windows":
-		systray.SetIcon(read(name + ".ico"))
-	case runtime.GOOS == "darwin" && name != "listening":
-		t := read(name + "-template.png")
-		systray.SetTemplateIcon(t, t)
-	default:
-		systray.SetIcon(read(name + ".png"))
 	}
 }

@@ -6,31 +6,41 @@ import (
 	"syscall"
 )
 
-// Only Linux has Wayland.
+// Only Linux has Wayland, where the desktop's shortcut stands in for the global hotkey.
 func (a *app) setupDesktopShortcut(exe string) error { return nil }
+func gnomeShortcuts() bool                           { return false }
+func desktopShortcut() string                        { return "" }
+func setDesktopShortcut(exe, spec string) error      { return nil }
 
 const runKey = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
 
-// setupAutostart offers a Run registry value for `hearsay run` (the tray icon).
-func (a *app) setupAutostart(exe string) error {
-	value := `"` + exe + `" run`
-	out, err := exec.Command("reg", "query", runKey, "/v", "Hearsay").Output()
-	if err == nil {
-		if strings.Contains(string(out), value) {
-			done("the tray icon starts at login")
+// autostartState reports whether the Run registry value starts exe's tray at login
+// (on), or another hearsay's (other).
+func autostartState(exe string) (on, other bool) {
+	out, err := hidden(exec.Command("reg", "query", runKey, "/v", "Hearsay")).Output()
+	if err != nil {
+		return false, false
+	}
+	on = strings.Contains(string(out), `"`+exe+`" run`)
+	return on, !on
+}
+
+// setAutostart adds or removes the Run registry value for `hearsay run` (the tray icon).
+func setAutostart(exe string, on bool) error {
+	if !on {
+		if on, other := autostartState(exe); !on && !other {
 			return nil
 		}
-		if !yes("Another hearsay starts at login. Point it at this one ("+exe+")?", true) {
-			return nil
-		}
-	} else if !yes("Start the Hearsay tray icon at login?", true) {
-		return nil
+		return hidden(exec.Command("reg", "delete", runKey, "/v", "Hearsay", "/f")).Run()
 	}
-	if err := exec.Command("reg", "add", runKey, "/v", "Hearsay", "/t", "REG_SZ", "/d", value, "/f").Run(); err != nil {
-		return err
-	}
-	done("the tray icon starts at login")
-	return startDetached(exe, "run")
+	return hidden(exec.Command("reg", "add", runKey, "/v", "Hearsay", "/t", "REG_SZ", "/d", `"`+exe+`" run`, "/f")).Run()
+}
+
+// hidden keeps a console program from flashing a window when the tray (which has no
+// console) runs it.
+func hidden(cmd *exec.Cmd) *exec.Cmd {
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000} // CREATE_NO_WINDOW
+	return cmd
 }
 
 func startDetached(exe string, args ...string) error {

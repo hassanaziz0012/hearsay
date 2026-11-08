@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hearsay</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <div class="titlebar-space"></div>
+
+  <!-- Main app: sidebar and three pages -->
+  <div id="main" class="shell" hidden>
+    <nav class="side">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        <span class="wordmark">Hearsay</span>
+      </div>
+      <button class="nav" data-page="status" aria-current="page">Status</button>
+      <button class="nav" data-page="settings">Settings</button>
+      <button class="nav" data-page="help">Troubleshoot</button>
+      <p class="side-foot" id="version"></p>
+    </nav>
+
+    <main class="content">
+      <!-- Status -->
+      <section class="page" id="page-status">
+        <div class="hero" id="hero" data-state="idle">
+          <div class="wave" aria-hidden="true">
+            <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          </div>
+          <div class="hero-text">
+            <h1 id="st-label">Ready</h1>
+            <p class="hero-sub" id="st-sub"></p>
+          </div>
+          <div class="hero-actions">
+            <button class="btn primary" id="st-toggle">Start dictation</button>
+            <button class="btn quiet" id="st-cancel" hidden>Cancel</button>
+          </div>
+        </div>
+
+        <div class="notice warn" id="st-error" hidden>
+          <strong>Last press didn't work.</strong>
+          <span id="st-error-text"></span>
+        </div>
+        <div class="notice warn" id="st-hotkey-error" hidden></div>
+        <div class="notice" id="st-nokeyboard" hidden>
+          <span>Hearsay doesn't know which keyboard on the phone has Rambler.</span>
+          <button class="link" id="st-pick-keyboard">Choose the keyboard</button>
+        </div>
+
+        <dl class="facts">
+          <div>
+            <dt>Phone</dt>
+            <dd><span id="st-phone"></span> <span class="addr" id="st-addr"></span></dd>
+            <dd class="row">
+              <span class="pill" id="st-conn" data-tone="unknown">Not checked</span>
+              <button class="link" id="st-check">Check connection</button>
+            </dd>
+          </div>
+          <div>
+            <dt>Hotkey</dt>
+            <dd id="st-hotkey"></dd>
+            <dd class="dim" id="st-hotkey-line"></dd>
+          </div>
+          <div>
+            <dt>Keyboard on the phone</dt>
+            <dd id="st-keyboard"></dd>
+          </div>
+          <div>
+            <dt>The text goes</dt>
+            <dd id="st-paste"></dd>
+          </div>
+        </dl>
+      </section>
+
+      <!-- Settings -->
+      <section class="page" id="page-settings" hidden>
+        <h2>Settings</h2>
+
+        <div class="setting">
+          <div class="setting-text">
+            <h3>Hotkey</h3>
+            <p id="set-hotkey-help">Press it once to start listening, again to paste what you said.</p>
+          </div>
+          <div class="setting-control">
+            <button class="recorder" id="set-hotkey" aria-describedby="set-hotkey-help"></button>
+            <button class="link" id="set-hotkey-none">Turn off</button>
+          </div>
+          <p class="field-msg" id="set-hotkey-msg" role="status"></p>
+        </div>
+
+        <div class="setting">
+          <div class="setting-text">
+            <h3>Paste the text</h3>
+            <p>Off: the text is only copied, and you paste it yourself.</p>
+          </div>
+          <div class="setting-control">
+            <label class="switch"><input type="checkbox" id="set-paste"><span></span></label>
+          </div>
+          <p class="field-msg" id="set-paste-msg" role="status"></p>
+        </div>
+
+        <div class="setting">
+          <div class="setting-text">
+            <h3>Start at login</h3>
+            <p id="set-login-help">Keeps the <span class="trayname">tray icon</span> and hotkey ready after you sign in.</p>
+          </div>
+          <div class="setting-control">
+            <label class="switch"><input type="checkbox" id="set-login"><span></span></label>
+          </div>
+          <p class="field-msg" id="set-login-msg" role="status"></p>
+        </div>
+      </section>
+
+      <!-- Troubleshoot -->
+      <section class="page" id="page-help" hidden>
+        <h2>Troubleshoot</h2>
+
+        <div class="tool">
+          <div>
+            <h3>Test the connection</h3>
+            <p>Asks the phone whether it's there and still knows this computer.</p>
+            <p class="field-msg" id="tr-conn-msg" role="status"></p>
+          </div>
+          <button class="btn" id="tr-conn">Test connection</button>
+        </div>
+
+        <div class="tool">
+          <div>
+            <h3>Pair again</h3>
+            <p>When the phone's app was reinstalled, or you got a new phone.</p>
+          </div>
+          <button class="btn" id="tr-pair">Pair again</button>
+        </div>
+
+        <div class="tool">
+          <div>
+            <h3>Forget this phone</h3>
+            <p>Unpairs on both sides. Dictation stops until you pair again.</p>
+            <p class="field-msg" id="tr-forget-msg" role="status"></p>
+          </div>
+          <button class="btn danger" id="tr-forget">Forget phone</button>
+        </div>
+
+        <div class="tool">
+          <div>
+            <h3>Log</h3>
+            <p>What each press did, with timings. It never contains what you said.</p>
+          </div>
+          <button class="btn" id="tr-log">Open log</button>
+        </div>
+
+        <div class="tool">
+          <div>
+            <h3>Report a problem</h3>
+            <p>Saves your setup and the end of the log to a file you can attach to a bug report.</p>
+            <p class="field-msg" id="tr-report-msg" role="status"></p>
+          </div>
+          <button class="btn" id="tr-report">Save report</button>
+        </div>
+
+        <p class="dim small">Settings are in <code id="tr-config"></code></p>
+      </section>
+    </main>
+  </div>
+
+  <!-- Setup wizard -->
+  <div id="wizard" class="shell wizard" hidden>
+    <aside class="side">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        <span class="wordmark">Hearsay</span>
+      </div>
+      <p class="side-intro">Your phone on the desk becomes this computer's microphone.</p>
+      <ol class="steps" id="steps">
+        <li data-step="install">Install the phone app</li>
+        <li data-step="presser">Turn on the key presser</li>
+        <li data-step="pair">Pair</li>
+        <li data-step="keyboard">Keyboard</li>
+        <li data-step="test">Try it</li>
+        <li data-step="finish">Finish</li>
+      </ol>
+      <button class="link side-foot" id="wz-close" hidden>Close setup</button>
+    </aside>
+
+    <main class="content">
+      <!-- 1. Install -->
+      <section class="step" data-step="install">
+        <h2>Install the Hearsay app on your phone</h2>
+        <p class="lede">Hearsay needs an Android phone with Gboard on the same Wi-Fi as this computer. Skip this if the app is already installed.</p>
+        <div class="install">
+          <figure class="qr" id="qr" aria-label="QR code with the download link"></figure>
+          <ol class="howto">
+            <li>Turn Play Protect off for a moment: in the Play Store, tap your profile picture, then Play Protect, then the gear, and turn off <em>Scan apps with Play Protect</em>. It blocks apps it doesn't know.</li>
+            <li>Scan the code with the phone's camera and download the app.</li>
+            <li>Open the downloaded file and tap Install.</li>
+            <li>Turn Play Protect back on.</li>
+          </ol>
+        </div>
+        <p class="small dim">Or open <button class="link" id="wz-release"></button> on the phone.
+          Have a USB cable and Developer options? <code>hearsay setup --adb</code> in a terminal does most of this for you.</p>
+        <div class="actions">
+          <button class="btn primary" data-next>The app is installed</button>
+        </div>
+      </section>
+
+      <!-- 2. Key presser -->
+      <section class="step" data-step="presser" hidden>
+        <h2>Turn on the key presser</h2>
+        <p class="lede">The app taps the keyboard's mic key for you. Android calls this an accessibility service.</p>
+        <ol class="howto">
+          <li>Open the Hearsay app and tap <em>Open settings</em> next to Key presser, then turn on <em>Hearsay key presser</em>.</li>
+          <li>If Android says it's a restricted setting: go back to the app, tap <em>App info</em>, then the ⋮ menu, <em>Allow restricted settings</em>, and try again.</li>
+          <li>On Android 17, allow the app on the local network when it asks.</li>
+        </ol>
+        <div class="searching" id="wz-search" data-state="looking">
+          <span class="radar" aria-hidden="true"></span>
+          <span id="wz-search-text" role="status">Looking for your phone on the network…</span>
+        </div>
+        <ul class="phones" id="wz-phones"></ul>
+        <details class="manual">
+          <summary>The phone doesn't show up</summary>
+          <p>Type the address the Hearsay app shows under <em>This phone</em>.</p>
+          <form class="inline" id="wz-addr-form">
+            <input id="wz-addr" placeholder="192.168.1.20" autocomplete="off" spellcheck="false" aria-label="Phone address">
+            <button class="btn">Use this address</button>
+          </form>
+          <p class="field-msg" id="wz-addr-msg" role="status"></p>
+        </details>
+        <div class="actions">
+          <button class="btn quiet" data-back>Back</button>
+        </div>
+      </section>
+
+      <!-- 3. Pair -->
+      <section class="step" data-step="pair" hidden>
+        <h2>Pair with <span id="wz-pair-name">your phone</span></h2>
+        <p class="lede" id="wz-pair-lede">Open the Hearsay app on the phone and keep it on screen.</p>
+        <div class="code-box" id="wz-code-box" data-state="connecting">
+          <div class="code" id="wz-code" aria-live="polite">––– –––</div>
+          <p id="wz-code-help">Connecting…</p>
+        </div>
+        <p class="field-msg" id="wz-pair-msg" role="status"></p>
+        <div class="actions">
+          <button class="btn quiet" data-back id="wz-pair-back">Back</button>
+          <button class="btn" id="wz-pair-retry" hidden>Try again</button>
+        </div>
+      </section>
+
+      <!-- 4. Keyboard -->
+      <section class="step" data-step="keyboard" hidden>
+        <h2>Pick the keyboard with Rambler</h2>
+        <p class="lede">Rambler is Gboard's voice typing. Hearsay switches to this keyboard while you dictate and back afterwards.</p>
+        <div id="wz-kbs" class="kbs" role="radiogroup" aria-label="Keyboards"></div>
+        <div class="checklist" id="wz-kb-checks" hidden>
+          <p class="check" id="wz-kb-enabled"></p>
+          <p class="check" id="wz-kb-mic"></p>
+        </div>
+        <p class="small dim">In Gboard's voice typing settings, choose Rambler rather than regular voice typing.</p>
+        <p class="field-msg" id="wz-kb-msg" role="status"></p>
+        <div class="actions">
+          <button class="btn quiet" id="wz-kb-recheck">Check again</button>
+          <button class="btn primary" id="wz-kb-next" disabled>Continue</button>
+        </div>
+      </section>
+
+      <!-- 5. Test -->
+      <section class="step" data-step="test" hidden>
+        <h2>Try a dictation</h2>
+        <p class="lede">Start, say a sentence to the phone, then stop. The text is copied to the clipboard.</p>
+        <div class="tryit" id="wz-try" data-state="ready">
+          <button class="mic-btn" id="wz-try-btn" aria-describedby="wz-try-help">
+            <span class="wave small" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+            <span id="wz-try-label">Start</span>
+          </button>
+          <p id="wz-try-help" role="status">Press Start, then talk.</p>
+        </div>
+        <blockquote class="heard" id="wz-heard" hidden></blockquote>
+        <div class="actions">
+          <button class="btn quiet" data-back>Back</button>
+          <button class="btn" data-next id="wz-test-next">Skip</button>
+        </div>
+      </section>
+
+      <!-- 6. Finish -->
+      <section class="step" data-step="finish" hidden>
+        <h2>You're set</h2>
+        <p class="lede" id="wz-finish-lede"></p>
+        <div class="keys big" id="wz-finish-keys"></div>
+        <p class="small dim" id="wz-finish-wayland" hidden></p>
+        <div class="setting compact">
+          <div class="setting-text">
+            <h3>Start at login</h3>
+            <p>Keeps the <span class="trayname">tray icon</span> and hotkey ready after you sign in.</p>
+          </div>
+          <div class="setting-control">
+            <label class="switch"><input type="checkbox" id="wz-login" checked><span></span></label>
+          </div>
+        </div>
+        <p class="field-msg" id="wz-finish-msg" role="status"></p>
+        <div class="actions">
+          <button class="btn quiet" data-back>Back</button>
+          <button class="btn primary" id="wz-done">Done</button>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

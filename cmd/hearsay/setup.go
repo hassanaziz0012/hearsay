@@ -595,12 +595,7 @@ func ramblerHint(kb string) {
 // pickKeyboard picks the keyboard with Rambler among the installed ones (IME ids): the
 // config's if the user keeps it, else the only Gboard, else the user's choice.
 func (a *app) pickKeyboard(all []string, isEnabled func(string) bool, label func(string) string) (string, error) {
-	var gboards []string
-	for _, ime := range all {
-		if strings.HasSuffix(ime, latinIME) {
-			gboards = append(gboards, ime)
-		}
-	}
+	gboards := gboards(all)
 	kb := a.cfg.Keyboard
 	switch {
 	case kb != "" && slices.Contains(all, kb) &&
@@ -619,6 +614,17 @@ func (a *app) pickKeyboard(all []string, isEnabled func(string) bool, label func
 		}
 	}
 	return gboards[choose("Which keyboard has Rambler?", labels)], nil
+}
+
+// gboards are the keyboards (IME ids) that may have Rambler: Gboard and its builds.
+func gboards(all []string) []string {
+	var gs []string
+	for _, ime := range all {
+		if strings.HasSuffix(ime, latinIME) {
+			gs = append(gs, ime)
+		}
+	}
+	return gs
 }
 
 // setupMic makes sure the keyboard may use the mic. Without it Gboard answers the mic key
@@ -650,25 +656,71 @@ func (a *app) setupTest() error {
 	if !yes("Try a dictation now?", true) {
 		return nil
 	}
-	paste := a.paste
-	a.paste = false // the terminal has focus; copy only
-	defer func() { a.paste = paste }()
-	if err := a.action(a.start); err != nil {
+	if err := a.testStart(); err != nil {
 		say("The test didn't start (see above). Fix that, then run setup again.")
 		return nil
 	}
 	ask("Rambler is listening. Say something to the phone, then press Enter here.")
 	fmt.Println()
-	if err := a.action(func() error { return a.stop(true) }); err != nil {
+	text, err := a.testStop()
+	switch {
+	case err != nil:
 		say("The test failed (see above).")
-		return nil
+	case strings.TrimSpace(text) == "":
+		say("Rambler heard nothing. Check that Rambler (not regular voice typing) is chosen")
+		say("in the keyboard's voice typing settings, then try again with hearsay toggle.")
+	default:
+		fmt.Println()
+		done("that's what Rambler heard (also copied to the clipboard)")
 	}
-	fmt.Println()
-	done("that's what Rambler heard (also copied to the clipboard)")
 	return nil
 }
 
+// testStart starts a test dictation; testStop ends it and returns what Rambler heard,
+// copied to the clipboard but not pasted (the focus is on setup, not on a text field).
+func (a *app) testStart() error { return a.action(a.start) }
+
+func (a *app) testStop() (string, error) {
+	var text string
+	err := a.action(func() error {
+		paste := a.paste
+		a.paste = false
+		defer func() { a.paste = paste }()
+		a.heard = ""
+		err := a.stop(true)
+		text = a.heard
+		return err
+	})
+	return text, err
+}
+
 // 7. Shortcut and start at login
+
+// trayName is what the tray icon is called on this system.
+func trayName() string {
+	if runtime.GOOS == "darwin" {
+		return "menu bar icon"
+	}
+	return "tray icon"
+}
+
+// setupAutostart offers to start the tray at login.
+func (a *app) setupAutostart(exe string) error {
+	on, other := autostartState(exe)
+	switch {
+	case on:
+		done("the %s starts at login", trayName())
+		return nil
+	case other && !yes("Another hearsay starts at login. Point it at this one ("+exe+")?", true),
+		!other && !yes("Start the Hearsay "+trayName()+" at login?", true):
+		return nil
+	}
+	if err := setAutostart(exe, true); err != nil {
+		return err
+	}
+	done("the %s starts at login", trayName())
+	return nil
+}
 
 func (a *app) setupDesktop() error {
 	exe, err := os.Executable()
@@ -702,5 +754,13 @@ func (a *app) setupDesktop() error {
 		say("To paste, macOS asks once for the Accessibility permission for hearsay (or the")
 		say("terminal running it): System Settings > Privacy & Security > Accessibility.")
 	}
-	return a.setupAutostart(exe)
+	if err := a.setupAutostart(exe); err != nil {
+		return err
+	}
+	// Start it now even if it won't start at login: the hotkey only works while it runs.
+	if trayRunning() {
+		done("the tray icon is running (quit and start it again to pick up changes)")
+		return nil
+	}
+	return startDetached(exe, "run")
 }

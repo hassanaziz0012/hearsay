@@ -88,8 +88,7 @@ func (a *app) notify(msg string, ms int, keep bool) {}
 // detachConsole closes the console window Windows opens for `hearsay run` at login (or
 // from Explorer), but not the terminal it was started from: that one has other processes.
 func detachConsole() {
-	var ids [2]uint32
-	if n, _, _ := consoleProcs.Call(uintptr(unsafe.Pointer(&ids[0])), 2); n == 1 {
+	if ownConsole() {
 		freeConsole.Call()
 		// The old handles are dead; nil makes newApp log to the file instead.
 		os.Stdout, os.Stderr = nil, nil

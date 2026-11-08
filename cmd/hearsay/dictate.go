@@ -26,6 +26,7 @@ func (a *app) listening() {
 
 // handOver gives the user the text a stop brought back (or says why there is none).
 func (a *app) handOver(text string, paste bool) {
+	a.heard = text
 	switch {
 	case !paste:
 		a.notify("Cancelled", 2000, false)

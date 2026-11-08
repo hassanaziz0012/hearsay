@@ -49,9 +49,13 @@ func configDir() string {
 
 func configPath() string { return filepath.Join(configDir(), "config.json") }
 
-// runDir holds the tray status, the lock and the log.
-// On Linux that's $XDG_RUNTIME_DIR (cleared at logout), elsewhere the cache dir.
+// runDir holds the tray status, the lock and the log: $HEARSAY_RUN_DIR if set (to run a
+// second, separate Hearsay), on Linux $XDG_RUNTIME_DIR (cleared at logout), elsewhere the
+// cache dir.
 func runDir() string {
+	if d := os.Getenv("HEARSAY_RUN_DIR"); d != "" {
+		return d
+	}
 	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
 		return filepath.Join(d, "hearsay")
 	}

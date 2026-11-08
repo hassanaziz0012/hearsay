@@ -11,24 +11,32 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"golang.org/x/term"
 )
 
 const usage = `hearsay: dictate with Rambler on the phone, paste on the PC.
 
-  hearsay [toggle]   first call starts listening, second stops and pastes
+  hearsay            open the Hearsay window (setup the first time), with the tray icon
+                     and global hotkey (what a double-click does)
+  hearsay run        tray icon and global hotkey without the window (at login)
+  hearsay toggle     first call starts listening, second stops and pastes
   hearsay start|stop force one half of the toggle
   hearsay cancel     close Rambler without pasting
-  hearsay run        tray icon and global hotkey (keeps running)
-  hearsay setup      guided setup: app, phone, keyboard, test, hotkey. Asks whether to
-                     use adb (--adb, does most of it) or not (--no-adb, by hand);
-                     --apk FILE installs that APK over adb instead of the bundled one
-  hearsay diagnose   save the keyboard's key ids to hearsay-diagnose.txt (for bug reports)
+  hearsay setup      guided setup on the terminal: app, phone, keyboard, test, hotkey.
+                     Asks whether to use adb (--adb, does most of it) or not (--no-adb,
+                     by hand); --apk FILE installs that APK over adb instead of the bundled one
+  hearsay diagnose   save the keyboard's key ids to hearsay-diagnose.txt (needs adb)
   hearsay pair [ADDRESS]  pair with the phone (no adb needed)
   hearsay pair --forget   forget the paired phone
 
 Env: HEARSAY_SERIAL (pick an adb device), HEARSAY_PASTE=0 (copy only, no Ctrl+V),
-     HEARSAY_DEBUG=1 (timings on stderr).
+     HEARSAY_DEBUG=1 (timings on stderr), HEARSAY_RUN_DIR (status, lock and log files
+     elsewhere, with XDG_CONFIG_HOME to run a second, separate Hearsay).
 `
+
+// version is set by release builds (-ldflags "-X main.version=v1.2.3").
+var version = "dev"
 
 const (
 	pkg      = "me.hassandev.hearsay"
@@ -46,6 +54,7 @@ type app struct {
 	debug   bool
 	log     io.Writer // debug lines and errors: stderr, or the log file without a terminal
 	stdout  bool      // print the dictated text (a CLI run, not the tray)
+	heard   string    // the text the last stop brought back
 
 	mu sync.Mutex // one action at a time within this process (the tray)
 	t0 time.Time  // start of the current action, for log timings
@@ -57,12 +66,16 @@ type reported struct{ msg string }
 func (r reported) Error() string { return r.msg }
 
 func main() {
-	cmd := "toggle"
+	cmd, args := "", []string(nil)
 	if len(os.Args) > 1 {
-		cmd = os.Args[1]
+		cmd, args = os.Args[1], os.Args[2:]
+	}
+	// A double-click opens the window.
+	if cmd == "" {
+		cmd = "gui"
 	}
 	switch cmd {
-	case "toggle", "start", "stop", "cancel", "run", "setup", "diagnose", "pair":
+	case "toggle", "start", "stop", "cancel", "run", "gui", "setup", "diagnose", "pair":
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return
@@ -71,7 +84,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	if cmd == "run" {
+	if cmd == "run" || cmd == "gui" {
 		detachConsole()
 	}
 	a, err := newApp(cmd)
@@ -87,12 +100,19 @@ func main() {
 			err = a.action(func() error { return a.stop(false) })
 		case "diagnose":
 			err = a.action(a.diagnose)
-		case "run":
-			err = a.runTray()
+		case "run", "gui":
+			err = a.runGUI(cmd == "gui")
 		case "setup":
-			err = a.setup(os.Args[2:])
+			err = a.setup(args)
+			if ownConsole() {
+				// Explorer's console window would vanish before the last lines are read.
+				if err != nil {
+					fmt.Println("hearsay:", err)
+				}
+				ask("\nPress Enter to close this window.")
+			}
 		case "pair":
-			err = a.pairPhone(os.Args[2:])
+			err = a.pairPhone(args)
 		}
 	}
 	if err != nil {
@@ -112,7 +132,7 @@ func newApp(cmd string) (*app, error) {
 	if err := os.MkdirAll(runDir(), 0o700); err != nil {
 		return nil, err
 	}
-	a := &app{log: os.Stderr, stdout: cmd != "run", t0: time.Now()}
+	a := &app{log: os.Stderr, stdout: cmd != "run" && cmd != "gui", t0: time.Now()}
 	a.debug = os.Getenv("HEARSAY_DEBUG") == "1"
 	// Run from a hotkey or at login there's no terminal: keep a log, with timings.
 	if !isTerminal(os.Stderr) {
@@ -181,7 +201,4 @@ func (a *app) failAs(msg string, retry bool) error {
 	return reported{msg}
 }
 
-func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
-}
+func isTerminal(f *os.File) bool { return f != nil && term.IsTerminal(int(f.Fd())) }
