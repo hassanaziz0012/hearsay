@@ -4,6 +4,8 @@ Dictate on your computer with **Rambler**, the AI voice typing in Gboard, runnin
 Android phone. Press a hotkey on the computer, speak to the phone, press it again, and the
 cleaned-up text is pasted wherever you're typing on the computer.
 
+**Website:** [hearsay-site-rho.vercel.app](https://hearsay-site-rho.vercel.app)
+
 The phone stays on the desk, locked if you like. The Hearsay app on the phone opens a text
 field, presses Gboard's mic key and sends the text back to the computer over your Wi-Fi.
 The connection is paired and encrypted: the phone only answers computers you've paired it
@@ -11,8 +13,14 @@ with.
 
 Rambler is Google's feature; Hearsay isn't affiliated with Google.
 
-**Status: v0.1, early testing.** Windows and Linux builds. macOS builds from source but
-hasn't been tested yet.
+**Status: v0.2, early testing.** Windows and Linux builds. macOS builds from source but
+hasn't been tested yet. See [Known limitations](#known-limitations) before you install.
+
+## See it in action
+
+The 24-second launch video:
+
+https://github.com/user-attachments/assets/5773cd01-ecd2-4273-a0aa-e9b75f7ee332
 
 ## What you need
 
@@ -24,6 +32,25 @@ hasn't been tested yet.
   Windows 11 and up-to-date Windows 10 already have. Linux needs GTK 4 and WebKitGTK 6.0
   (`webkitgtk-6.0` on Arch, `libwebkitgtk-6.0-4` on Debian and Ubuntu 24.04+), which
   GNOME desktops usually have.
+
+## Known limitations
+
+- **Only phones with Rambler.** Hearsay doesn't do any speech recognition itself; it uses
+  Gboard's. Without Rambler you'd get ordinary Gboard voice typing at best.
+- **A Gboard update can break it.** The phone app finds Gboard's mic key by Gboard's
+  internal ID for it, so if Google changes the keyboard, dictation may stop starting until
+  Hearsay is updated. `hearsay diagnose` collects what's needed to fix it.
+- **The phone app isn't on the Play Store.** You install the APK yourself, which means
+  turning Play Protect off for the install and allowing a "restricted setting" for the key
+  presser.
+- **The computer builds aren't signed.** Windows shows an "unknown publisher" warning.
+- **Same Wi-Fi only.** There's no relay over the internet, and networks that keep devices
+  apart (guest, hotel, many office networks) don't work.
+- **No macOS download yet.** It builds from source on a Mac but hasn't been tested. Windows
+  and Linux builds are x86-64 only.
+- **Wayland has no global hotkey.** On Linux with Wayland the hotkey is a desktop shortcut
+  (set up for you on GNOME, by hand elsewhere).
+- **One phone per computer.** Pairing a second phone replaces the first.
 
 ## Install
 
