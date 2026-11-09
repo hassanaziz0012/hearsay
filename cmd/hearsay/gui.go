@@ -81,9 +81,9 @@ func (a *app) runGUI(show bool) error {
 		return nil
 	}
 
-	bg := application.NewRGB(0xf6, 0xf5, 0xf2)
+	bg := application.NewRGB(0xff, 0xff, 0xff)
 	if g.wails.Env.IsDarkMode() {
-		bg = application.NewRGB(0x15, 0x15, 0x17)
+		bg = application.NewRGB(0x05, 0x0f, 0x16)
 	}
 	g.win = g.wails.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             "main",

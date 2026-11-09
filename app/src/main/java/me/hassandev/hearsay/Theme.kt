@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.res.Configuration
 import android.graphics.Typeface
 import android.util.TypedValue
+import android.view.View
+import android.view.WindowInsetsController
 import android.widget.TextView
 
 /** M3 type scale entries used by the app's screens: size, line height (sp), tracking (sp), weight. */
@@ -19,6 +21,25 @@ internal enum class TextStyle(val size: Float, val lineHeight: Float, val tracki
         view.letterSpacing = tracking / size
         view.typeface = Typeface.create(Typeface.DEFAULT, weight, false)
     }
+}
+
+/** Paints the window's background with the palette's surface, with bar icons to match. */
+internal fun Activity.applySurface(palette: Palette) {
+    window.decorView.setBackgroundColor(palette.surface)
+    if (!palette.dark) {
+        val light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+            WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+        window.insetsController?.setSystemBarsAppearance(light, light)
+    }
+}
+
+internal fun Activity.dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+internal fun Activity.textView(style: TextStyle, color: Int, value: CharSequence = "") = TextView(this).apply {
+    style.applyTo(this)
+    setTextColor(color)
+    text = value
+    textAlignment = View.TEXT_ALIGNMENT_VIEW_START
 }
 
 /** M3 colour roles from the device's dynamic (Material You) scheme, light or dark. */
