@@ -1,0 +1,71 @@
+name: Device compatibility report
+description: Tell us whether Hearsay works on your phone, to help build a public compatibility list.
+title: "[Compatibility]: "
+labels: ["compatibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping map out which phones work with Hearsay. One phone per report, please.
+
+        These reports are public and may be summarised in a public compatibility list.
+  - type: dropdown
+    id: result
+    attributes:
+      label: Does Hearsay work on this phone?
+      options:
+        - Yes, it works
+        - It works, but with problems
+        - No, it doesn't work
+    validations:
+      required: true
+  - type: input
+    id: phone-model
+    attributes:
+      label: Phone model
+      description: The exact model name or number. Find it in Settings > About phone (Device name or Model).
+      placeholder: Pixel 8 Pro / SM-S928B
+    validations:
+      required: true
+  - type: input
+    id: android-version
+    attributes:
+      label: Android version
+      description: Settings > About phone > Android version. Include the API level if you know it.
+      placeholder: Android 15 (API 35)
+    validations:
+      required: true
+  - type: input
+    id: gboard-version
+    attributes:
+      label: Gboard version
+      description: Gboard settings > About, or Play Store > Gboard > About this app.
+      placeholder: 14.9.10.123456789-release-arm64-v8a
+    validations:
+      required: true
+  - type: dropdown
+    id: rambler
+    attributes:
+      label: Is Rambler available in Gboard?
+      description: Gboard settings > Voice typing. This helps us tell a compatibility problem apart from a setup problem.
+      options:
+        - "Yes"
+        - "No"
+        - Not sure
+    validations:
+      required: false
+  - type: textarea
+    id: details
+    attributes:
+      label: What happened?
+      description: For "doesn't work" or "works with problems", tell us what you tried and where it stopped. Include any error messages or the output of `hearsay diagnose`.
+      placeholder: I paired the phone, pressed the hotkey, and...
+    validations:
+      required: false
+  - type: checkboxes
+    id: public-list
+    attributes:
+      label: Public compatibility list
+      options:
+        - label: I understand this report is public and may be included in a public compatibility list.
+          required: true
