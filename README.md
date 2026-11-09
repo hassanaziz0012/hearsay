@@ -4,7 +4,7 @@ Dictate on your computer with **Rambler**, the AI voice typing in Gboard, runnin
 Android phone. Press a hotkey on the computer, speak to the phone, press it again, and the
 cleaned-up text is pasted wherever you're typing on the computer.
 
-**Website:** [hearsay-site-rho.vercel.app](https://hearsay-site-rho.vercel.app)
+**Website:** [hearsay.hassandev.me](https://hearsay.hassandev.me)
 
 The phone stays on the desk, locked if you like. The Hearsay app on the phone opens a text
 field, presses Gboard's mic key and sends the text back to the computer over your Wi-Fi.
