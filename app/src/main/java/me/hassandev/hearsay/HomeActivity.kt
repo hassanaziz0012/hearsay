@@ -7,6 +7,7 @@ import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.graphics.drawable.GradientDrawable
 import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -14,13 +15,10 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
-import android.view.View
 import android.view.WindowInsets
-import android.view.WindowInsetsController
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.TextView
 import java.net.Inet4Address
 
 /**
@@ -34,23 +32,29 @@ class HomeActivity : Activity() {
     private lateinit var content: LinearLayout
     private val handler = Handler(Looper.getMainLooper())
     private var askedPermission = false
+    // The pairing dialog on screen, if any (UI thread only): one pairing at a time.
+    private var pairDialog: AlertDialog? = null
+
+    // What the screen showed when it was last built. The refresher checks every second but
+    // rebuilds only on a change, so a tap isn't lost to views being swapped under it.
+    private var shown: List<Any?>? = null
 
     private val refresher = object : Runnable {
         override fun run() {
-            render()
+            if (state() != shown) render()
             handler.postDelayed(this, 1000)
         }
     }
 
+    /** Everything render() shows that can change while the screen is up. */
+    private fun state(): List<Any?> = listOf(
+        KeyPressService.instance != null, localNetworkAllowed(), wifiAddress(),
+        PhoneServer.port, PhoneServer.advertised, PairedComputers(this).all())
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         palette = Palette(this)
-        window.decorView.setBackgroundColor(palette.surface)
-        if (!palette.dark) {
-            val light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
-                WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-            window.insetsController?.setSystemBarsAppearance(light, light)
-        }
+        applySurface(palette)
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         setContentView(ScrollView(this).apply {
             addView(content)
@@ -94,22 +98,38 @@ class HomeActivity : Activity() {
             }
         }
         runOnUiThread {
+            // The screen may have closed since the request came in, and a second computer
+            // pairing meanwhile is refused rather than stacking another dialog.
+            if (isFinishing || isDestroyed || pairDialog != null) return@runOnUiThread reply(false)
             dialog = AlertDialog.Builder(this)
                 .setTitle("Pair with $name?")
                 .setMessage("Check that your computer shows the same code:\n\n${code.take(3)} ${code.drop(3)}")
                 .setPositiveButton("Pair") { _, _ -> reply(true) }
                 .setNegativeButton("Cancel") { _, _ -> reply(false) }
-                .setOnDismissListener { reply(false); render() }
+                .setOnDismissListener {
+                    reply(false)
+                    pairDialog = null
+                    if (!isDestroyed) render()
+                }
                 .show()
+            pairDialog = dialog
         }
-        return { runOnUiThread { dialog?.dismiss() } }
+        return {
+            runOnUiThread { dialog?.takeIf { it.isShowing && !isDestroyed }?.dismiss() }
+        }
+    }
+
+    override fun onDestroy() {
+        pairDialog?.dismiss()
+        super.onDestroy()
     }
 
     private fun render() {
+        shown = state()
         content.removeAllViews()
-        content.addView(text(TextStyle.LABEL_LARGE, palette.primary, "Hearsay"))
-        content.addView(text(TextStyle.HEADLINE_MEDIUM_EMPHASIZED, palette.onSurface, "Dictate from your computer"))
-        content.addView(text(TextStyle.BODY_MEDIUM, palette.onSurfaceVariant,
+        content.addView(textView(TextStyle.LABEL_LARGE, palette.primary, "Hearsay"))
+        content.addView(textView(TextStyle.HEADLINE_MEDIUM_EMPHASIZED, palette.onSurface, "Dictate from your computer"))
+        content.addView(textView(TextStyle.BODY_MEDIUM, palette.onSurfaceVariant,
             "Your computer starts Rambler here and gets the text back over Wi-Fi."), spaced(0, 24))
 
         val service = KeyPressService.instance
@@ -135,29 +155,39 @@ class HomeActivity : Activity() {
         card("This phone", when {
             service == null || PhoneServer.port == 0 -> "Not reachable while the key presser is off."
             address == null -> "Not connected to a network."
-            else -> "$address, port ${PhoneServer.port}" +
+            else -> "$address:${PhoneServer.port}" +
                 if (PhoneServer.advertised) "" else "\nNot announced on the network, so pair by address."
         })
 
-        content.addView(text(TextStyle.TITLE_LARGE, palette.onSurface, "Paired computers"), spaced(16, 8))
+        content.addView(textView(TextStyle.TITLE_LARGE, palette.onSurface, "Paired computers"), spaced(16, 8))
         val paired = PairedComputers(this).all()
         if (paired.isEmpty()) {
-            content.addView(text(TextStyle.BODY_MEDIUM, palette.onSurfaceVariant,
+            content.addView(textView(TextStyle.BODY_MEDIUM, palette.onSurfaceVariant,
                 "None yet. Keep this screen open and run `hearsay setup` (or `hearsay pair`) on your computer."))
         }
         for ((fp, name) in paired) {
-            card(name, "Key ${fp.take(8)}…", "Forget" to {
+            card(name, "Key ${fp.take(8)}…", "Forget" to { confirmForget(fp, name) })
+        }
+    }
+
+    private fun confirmForget(fp: String, name: String) {
+        if (isFinishing) return
+        AlertDialog.Builder(this)
+            .setTitle("Forget $name?")
+            .setMessage("It won't be able to dictate with this phone until you pair it again.")
+            .setPositiveButton("Forget") { _, _ ->
                 PairedComputers(this).remove(fp)
                 render()
-            })
-        }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun card(title: String, body: String, action: Pair<String, () -> Unit>? = null) {
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(text(TextStyle.LABEL_LARGE, palette.onSurface, title))
-            addView(text(TextStyle.BODY_MEDIUM, palette.onSurfaceVariant, body))
+            addView(textView(TextStyle.LABEL_LARGE, palette.onSurface, title))
+            addView(textView(TextStyle.BODY_MEDIUM, palette.onSurfaceVariant, body))
         }
         val row = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
@@ -207,25 +237,30 @@ class HomeActivity : Activity() {
         requestPermissions(arrayOf(LOCAL_NETWORK), 1)
     }
 
+    /**
+     * The phone's IPv4 address on the local network (Wi-Fi, else Ethernet). Not simply the
+     * active network's: that can be mobile data or a VPN, which the PC can't reach.
+     */
     private fun wifiAddress(): String? {
         val cm = getSystemService(ConnectivityManager::class.java)
-        return cm.getLinkProperties(cm.activeNetwork)?.linkAddresses
-            ?.map { it.address }?.firstOrNull { it is Inet4Address }?.hostAddress
+        // allNetworks is deprecated for callbacks, but this only needs a snapshot.
+        @Suppress("DEPRECATION")
+        val networks = listOfNotNull(cm.activeNetwork) + cm.allNetworks
+        for (transport in intArrayOf(NetworkCapabilities.TRANSPORT_WIFI, NetworkCapabilities.TRANSPORT_ETHERNET)) {
+            for (net in networks) {
+                val caps = cm.getNetworkCapabilities(net) ?: continue
+                if (!caps.hasTransport(transport) || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue
+                cm.getLinkProperties(net)?.linkAddresses?.map { it.address }
+                    ?.firstOrNull { it is Inet4Address }?.let { return it.hostAddress }
+            }
+        }
+        return null
     }
 
     private fun spaced(top: Int, bottom: Int) = LinearLayout.LayoutParams(-1, -2).apply {
         topMargin = dp(top)
         bottomMargin = dp(bottom)
     }
-
-    private fun text(style: TextStyle, color: Int, value: String) = TextView(this).apply {
-        style.applyTo(this)
-        setTextColor(color)
-        text = value
-        textAlignment = View.TEXT_ALIGNMENT_VIEW_START
-    }
-
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private companion object {
         // Android 17 (API 37): needed to talk to devices on the local network.

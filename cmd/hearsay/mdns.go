@@ -23,7 +23,7 @@ var (
 
 // browse looks for phones over mDNS until timeout, or until one that want accepts has
 // been found. It asks again every second: a phone with its screen off drops some
-// multicast, so the first query often goes unanswered (CONNECTION-HANDOFF.md, Phase A).
+// multicast, so the first query often goes unanswered.
 func browse(timeout time.Duration, want func(phoneService) bool) []phoneService {
 	// Port 5353 gets the multicast answers. If something holds it exclusively, a query
 	// from any other port asks for direct ("legacy unicast") answers instead.
@@ -35,33 +35,14 @@ func browse(timeout time.Duration, want func(phoneService) bool) []phoneService 
 	}
 	defer conn.Close()
 
-	type instance struct {
-		srv    *dnsmessage.SRVResource
-		fp     string
-		source net.IP // who answered, for when the A record is missing
-	}
-	instances := map[string]*instance{}
-	names := map[string]dnsmessage.Name{}
-	hosts := map[string]net.IP{}
+	b := newBrowser()
 	var found []phoneService
-	done := map[string]bool{}
-
 	end := time.Now().Add(timeout)
 	next := time.Now()
 	buf := make([]byte, 9000)
 	for time.Now().Before(end) {
 		if !time.Now().Before(next) {
-			// Ask for the services, then for whatever is still missing about each one.
-			qs := []dnsmessage.Question{{Name: serviceName, Type: dnsmessage.TypePTR, Class: dnsmessage.ClassINET}}
-			for key, in := range instances {
-				if in.srv == nil {
-					qs = append(qs, dnsmessage.Question{Name: names[key], Type: dnsmessage.TypeSRV, Class: dnsmessage.ClassINET},
-						dnsmessage.Question{Name: names[key], Type: dnsmessage.TypeTXT, Class: dnsmessage.ClassINET})
-				} else if hosts[key2(in.srv.Target)] == nil {
-					qs = append(qs, dnsmessage.Question{Name: in.srv.Target, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET})
-				}
-			}
-			if q, err := mdnsQuery(qs); err == nil {
+			if q, err := mdnsQuery(b.questions()); err == nil {
 				conn.WriteTo(q, mdnsGroup)
 			}
 			next = next.Add(time.Second)
@@ -71,90 +52,8 @@ func browse(timeout time.Duration, want func(phoneService) bool) []phoneService 
 		if err != nil {
 			continue
 		}
-		var p dnsmessage.Parser
-		h, err := p.Start(buf[:n])
-		if err != nil || !h.Response {
-			continue
-		}
-		p.SkipAllQuestions()
-		record := func(hdr dnsmessage.ResourceHeader) {
-			key := key2(hdr.Name)
-			switch hdr.Type {
-			case dnsmessage.TypePTR:
-				r, err := p.PTRResource()
-				if err == nil && key == key2(serviceName) && instances[key2(r.PTR)] == nil {
-					instances[key2(r.PTR)] = &instance{}
-					names[key2(r.PTR)] = r.PTR
-				}
-				return
-			case dnsmessage.TypeSRV:
-				if r, err := p.SRVResource(); err == nil && strings.HasSuffix(key, "._hearsay._tcp.local.") {
-					in := instances[key]
-					if in == nil {
-						in = &instance{}
-						instances[key], names[key] = in, hdr.Name
-					}
-					in.srv, in.source = &r, from.IP
-				}
-				return
-			case dnsmessage.TypeTXT:
-				if r, err := p.TXTResource(); err == nil {
-					for _, kv := range r.TXT {
-						if v, ok := strings.CutPrefix(kv, "fp="); ok {
-							if instances[key] == nil {
-								instances[key], names[key] = &instance{}, hdr.Name
-							}
-							instances[key].fp = v
-						}
-					}
-				}
-				return
-			case dnsmessage.TypeA:
-				if r, err := p.AResource(); err == nil {
-					hosts[key] = net.IP(r.A[:])
-				}
-				return
-			}
-			p.SkipAnswer()
-		}
-		for {
-			hdr, err := p.AnswerHeader()
-			if err != nil {
-				break
-			}
-			record(hdr)
-		}
-		p.SkipAllAuthorities()
-		for {
-			hdr, err := p.AdditionalHeader()
-			if err != nil {
-				break
-			}
-			// The resource methods read whichever section the last header came from.
-			switch hdr.Type {
-			case dnsmessage.TypePTR, dnsmessage.TypeSRV, dnsmessage.TypeTXT, dnsmessage.TypeA:
-				record(hdr)
-			default:
-				p.SkipAdditional()
-			}
-		}
-
-		for key, in := range instances {
-			if done[key] || in.srv == nil || in.fp == "" {
-				continue
-			}
-			ip := hosts[key2(in.srv.Target)]
-			if ip == nil {
-				ip = in.source
-			}
-			s := phoneService{
-				name: strings.TrimSuffix(names[key].String(), "._hearsay._tcp.local."),
-				addr: net.JoinHostPort(ip.String(), strconv.Itoa(int(in.srv.Port))),
-				fp:   in.fp,
-			}
-			// Unescape the instance name's spaces etc. (RFC 6763 allows any UTF-8).
-			s.name = strings.ReplaceAll(s.name, `\ `, " ")
-			done[key] = true
+		b.parse(buf[:n], from.IP)
+		for _, s := range b.complete() {
 			found = append(found, s)
 			if want != nil && want(s) {
 				return []phoneService{s}
@@ -165,6 +64,132 @@ func browse(timeout time.Duration, want func(phoneService) bool) []phoneService 
 		return nil
 	}
 	return found
+}
+
+// browser collects what mDNS answers say about _hearsay._tcp instances until each has its
+// port, fingerprint and address.
+type browser struct {
+	instances map[string]*instance // by key2 of the instance name
+	names     map[string]dnsmessage.Name
+	hosts     map[string]net.IP // A records, by key2 of the host name
+	done      map[string]bool   // already returned by complete
+}
+
+type instance struct {
+	srv    *dnsmessage.SRVResource
+	fp     string
+	source net.IP // who answered, for when the A record is missing
+}
+
+func newBrowser() *browser {
+	return &browser{instances: map[string]*instance{}, names: map[string]dnsmessage.Name{},
+		hosts: map[string]net.IP{}, done: map[string]bool{}}
+}
+
+// questions asks for the services, then for whatever is still missing about each one.
+func (b *browser) questions() []dnsmessage.Question {
+	qs := []dnsmessage.Question{{Name: serviceName, Type: dnsmessage.TypePTR, Class: dnsmessage.ClassINET}}
+	for key, in := range b.instances {
+		if in.srv == nil {
+			qs = append(qs, dnsmessage.Question{Name: b.names[key], Type: dnsmessage.TypeSRV, Class: dnsmessage.ClassINET},
+				dnsmessage.Question{Name: b.names[key], Type: dnsmessage.TypeTXT, Class: dnsmessage.ClassINET})
+		} else if b.hosts[key2(in.srv.Target)] == nil {
+			qs = append(qs, dnsmessage.Question{Name: in.srv.Target, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET})
+		}
+	}
+	return qs
+}
+
+// instance returns the instance called name, adding it if it is new.
+func (b *browser) instance(name dnsmessage.Name) *instance {
+	key := key2(name)
+	in := b.instances[key]
+	if in == nil {
+		in = &instance{}
+		b.instances[key], b.names[key] = in, name
+	}
+	return in
+}
+
+// parse takes in the records of one mDNS response from the address from.
+func (b *browser) parse(msg []byte, from net.IP) {
+	var p dnsmessage.Parser
+	h, err := p.Start(msg)
+	if err != nil || !h.Response {
+		return
+	}
+	p.SkipAllQuestions()
+	record := func(hdr dnsmessage.ResourceHeader) {
+		key := key2(hdr.Name)
+		switch hdr.Type {
+		case dnsmessage.TypePTR:
+			if r, err := p.PTRResource(); err == nil && key == key2(serviceName) {
+				b.instance(r.PTR)
+			}
+		case dnsmessage.TypeSRV:
+			if r, err := p.SRVResource(); err == nil && strings.HasSuffix(key, "._hearsay._tcp.local.") {
+				in := b.instance(hdr.Name)
+				in.srv, in.source = &r, from
+			}
+		case dnsmessage.TypeTXT:
+			if r, err := p.TXTResource(); err == nil && strings.HasSuffix(key, "._hearsay._tcp.local.") {
+				for _, kv := range r.TXT {
+					if v, ok := strings.CutPrefix(kv, "fp="); ok {
+						b.instance(hdr.Name).fp = v
+					}
+				}
+			}
+		case dnsmessage.TypeA:
+			if r, err := p.AResource(); err == nil {
+				b.hosts[key] = net.IP(r.A[:])
+			}
+		default:
+			p.SkipAnswer()
+		}
+	}
+	for {
+		hdr, err := p.AnswerHeader()
+		if err != nil {
+			break
+		}
+		record(hdr)
+	}
+	p.SkipAllAuthorities()
+	for {
+		hdr, err := p.AdditionalHeader()
+		if err != nil {
+			break
+		}
+		// The resource methods read whichever section the last header came from.
+		switch hdr.Type {
+		case dnsmessage.TypePTR, dnsmessage.TypeSRV, dnsmessage.TypeTXT, dnsmessage.TypeA:
+			record(hdr)
+		default:
+			p.SkipAdditional()
+		}
+	}
+}
+
+// complete returns the instances that have become complete since the last call.
+func (b *browser) complete() []phoneService {
+	var out []phoneService
+	for key, in := range b.instances {
+		if b.done[key] || in.srv == nil || in.fp == "" {
+			continue
+		}
+		ip := b.hosts[key2(in.srv.Target)]
+		if ip == nil {
+			ip = in.source
+		}
+		b.done[key] = true
+		// Name.String() gives the label's raw bytes (spaces and all), not escapes.
+		out = append(out, phoneService{
+			name: strings.TrimSuffix(b.names[key].String(), "._hearsay._tcp.local."),
+			addr: net.JoinHostPort(ip.String(), strconv.Itoa(int(in.srv.Port))),
+			fp:   in.fp,
+		})
+	}
+	return out
 }
 
 // key2 is a DNS name as a map key: names are case-insensitive.

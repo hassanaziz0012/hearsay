@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -54,7 +55,7 @@ func (a *app) pairNet(addr, guess string) error {
 			addr = net.JoinHostPort(guess, defaultPort)
 		default:
 			say("Not found. Is the phone on the same Wi-Fi, with the Hearsay key presser on?")
-			ip := ask("Type the address the Hearsay app shows (e.g. 192.168.1.20), or press Enter to stop:")
+			ip := ask("Type the address the Hearsay app shows under This phone (e.g. 192.168.1.20:47800),\nor press Enter to stop:")
 			if ip == "" {
 				return errors.New("no phone to pair with")
 			}
@@ -79,7 +80,8 @@ func (a *app) pairNet(addr, guess string) error {
 	return nil
 }
 
-// withPort adds PhoneServer's usual port to an address without one.
+// withPort adds PhoneServer's usual port to an address without one. The app shows its
+// port too, since it takes another one when 47800 is in use.
 func withPort(addr string) string {
 	if _, _, err := net.SplitHostPort(addr); err != nil {
 		return net.JoinHostPort(addr, defaultPort)
@@ -91,6 +93,7 @@ func withPort(addr string) string {
 type pairing struct {
 	a          *app
 	conn       *tls.Conn
+	rd         *bufio.Reader // conn's reader, kept for both requests
 	addr, name string
 	nonce      []byte
 	phoneCert  []byte
@@ -115,7 +118,8 @@ func (a *app) pairBegin(ctx context.Context, addr, name string, waiting func()) 
 		p.nonce = make([]byte, 32)
 		rand.Read(p.nonce)
 		commit := sha256.Sum256(p.nonce)
-		r, err = exchange(p.conn, map[string]any{"op": "pair", "name": host, "commit": hex.EncodeToString(commit[:])}, 10*time.Second)
+		p.rd = bufio.NewReader(p.conn)
+		r, err = exchangeOn(p.conn, p.rd, map[string]any{"op": "pair", "name": host, "commit": hex.EncodeToString(commit[:])}, 10*time.Second)
 		if err != nil {
 			p.conn.Close()
 			return nil, fmt.Errorf("pairing: %v", err)
@@ -153,7 +157,7 @@ func (a *app) pairBegin(ctx context.Context, addr, name string, waiting func()) 
 
 // finish waits for the user to tap Pair on the phone and saves the phone in the config.
 func (p *pairing) finish() error {
-	r, err := exchange(p.conn, map[string]any{"op": "reveal", "nonce": hex.EncodeToString(p.nonce)}, 90*time.Second)
+	r, err := exchangeOn(p.conn, p.rd, map[string]any{"op": "reveal", "nonce": hex.EncodeToString(p.nonce)}, 90*time.Second)
 	if err != nil {
 		return fmt.Errorf("pairing: %v", err)
 	}

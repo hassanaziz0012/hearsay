@@ -6,10 +6,8 @@ import (
 	"time"
 )
 
-// Dictation runs over the network through the app's PhoneServer (netTransport, net.go).
-func (a *app) toggle() error         { return netTransport{a}.toggle() }
-func (a *app) start() error          { return netTransport{a}.start() }
-func (a *app) stop(paste bool) error { return netTransport{a}.stop(paste) }
+// Dictation runs over the network through the app's PhoneServer: toggle, start and stop
+// are in net.go.
 
 func (a *app) requireKeyboard() error {
 	if a.cfg.Keyboard == "" {
@@ -27,6 +25,7 @@ func (a *app) listening() {
 // handOver gives the user the text a stop brought back (or says why there is none).
 func (a *app) handOver(text string, paste bool) {
 	a.heard = text
+	a.copied = false
 	switch {
 	case !paste:
 		a.notify("Cancelled", 2000, false)
@@ -48,6 +47,7 @@ func (a *app) deliver(text string) {
 		a.notify("Done, but couldn't copy: "+err.Error(), 5000, true)
 		return
 	}
+	a.copied = true
 	if a.paste {
 		time.Sleep(50 * time.Millisecond)
 		err := sendPaste()

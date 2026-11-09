@@ -28,6 +28,7 @@ import java.security.cert.X509Certificate
 import java.security.spec.ECGenParameterSpec
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLServerSocket
@@ -72,6 +73,7 @@ class PhoneServer(private val service: KeyPressService) {
 
     private val session = Session(service)
     private val busy = ReentrantLock()
+    private val connections = AtomicInteger()
     private val nsd = service.getSystemService(NsdManager::class.java)
     private var socket: SSLServerSocket? = null
     // A listener that failed to register stays "in use", so each attempt gets a new one.
@@ -98,7 +100,19 @@ class PhoneServer(private val service: KeyPressService) {
             try {
                 while (true) {
                     val client = server.accept() as SSLSocket
-                    thread(name = "hearsay-client", isDaemon = true) { handle(client) }
+                    // Anyone on the network can connect: cap the threads they get.
+                    if (connections.incrementAndGet() > MAX_CONNECTIONS) {
+                        connections.decrementAndGet()
+                        runCatching { client.close() }
+                        continue
+                    }
+                    thread(name = "hearsay-client", isDaemon = true) {
+                        try {
+                            handle(client)
+                        } finally {
+                            connections.decrementAndGet()
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 Log.i(TAG, "server stopped: $e")
@@ -113,7 +127,12 @@ class PhoneServer(private val service: KeyPressService) {
         port = 0
     }
 
-    /** (Re-)registers the mDNS service, e.g. after the local network permission is granted. */
+    /**
+     * (Re-)registers the mDNS service, e.g. after the local network permission is granted.
+     * Called from the server's threads and the UI thread, hence synchronized; the listener's
+     * callbacks only touch the state while their own registration is still the current one.
+     */
+    @Synchronized
     fun advertise() {
         unadvertise()
         val info = NsdServiceInfo().apply {
@@ -123,13 +142,15 @@ class PhoneServer(private val service: KeyPressService) {
             setAttribute("fp", identity.fingerprint.take(16))
         }
         val listener = object : NsdManager.RegistrationListener {
-            override fun onServiceRegistered(info: NsdServiceInfo) {
-                advertised = true
-                Log.i(TAG, "advertised as ${info.serviceName}")
+            override fun onServiceRegistered(info: NsdServiceInfo) = synchronized(this@PhoneServer) {
+                if (registration === this) {
+                    advertised = true
+                    Log.i(TAG, "advertised as ${info.serviceName}")
+                }
             }
-            override fun onRegistrationFailed(info: NsdServiceInfo, code: Int) {
+            override fun onRegistrationFailed(info: NsdServiceInfo, code: Int) = synchronized(this@PhoneServer) {
                 Log.w(TAG, "mDNS failed: $code")
-                registration = null
+                if (registration === this) registration = null
             }
             override fun onServiceUnregistered(info: NsdServiceInfo) {}
             override fun onUnregistrationFailed(info: NsdServiceInfo, code: Int) {}
@@ -143,6 +164,7 @@ class PhoneServer(private val service: KeyPressService) {
         }
     }
 
+    @Synchronized
     private fun unadvertise() {
         registration?.let { runCatching { nsd.unregisterService(it) } }
         registration = null
@@ -160,7 +182,7 @@ class PhoneServer(private val service: KeyPressService) {
             when {
                 PairedComputers(service).name(fp) != null -> request(fp, readJson(input), out)
                 pairingPrompt != null -> pair(peer, fp, input, out)
-                else -> send(out, error("not_paired", "this computer isn't paired with the phone. Run `hearsay pair`"))
+                else -> send(out, notPaired())
             }
         }
     } catch (e: Exception) {
@@ -179,7 +201,11 @@ class PhoneServer(private val service: KeyPressService) {
         try {
             session.beginRequest()
             val debug = req.optBoolean("debug")
-            val reply = { r: JSONObject -> send(out, if (debug) r.put("log", JSONArray(session.takeTrace())) else r) }
+            var replied = false
+            val reply = { r: JSONObject ->
+                replied = true
+                send(out, if (debug) r.put("log", JSONArray(session.takeTrace())) else r)
+            }
             val ime = req.optString("ime")
             val settle = req.optLong("settle", 700)
             val timeout = req.optLong("timeout", 8000)
@@ -212,6 +238,11 @@ class PhoneServer(private val service: KeyPressService) {
                 }
             } catch (e: Session.Failure) {
                 reply(error(e.code, e.message.orEmpty()))
+            } catch (e: Exception) {
+                // Anything else (a SecurityException, the keyboard switch refusing) is still
+                // an answer: without one the PC would think the connection dropped.
+                Log.w(TAG, "request $op", e)
+                if (!replied) reply(error("internal", "the phone hit an error: $e"))
             }
         } finally {
             busy.unlock()
@@ -222,7 +253,7 @@ class PhoneServer(private val service: KeyPressService) {
         val req = readJson(input)
         val commit = req.optString("commit")
         if (req.optString("op") != "pair" || commit.length != 64) {
-            return send(out, error("not_paired", "this computer isn't paired with the phone. Run `hearsay pair`"))
+            return send(out, notPaired())
         }
         val name = req.optString("name").take(64).ifBlank { "Computer" }
         val nonce = ByteArray(32).also(SecureRandom()::nextBytes)
@@ -263,6 +294,7 @@ class PhoneServer(private val service: KeyPressService) {
 
     private fun ok(state: String) = JSONObject().put("ok", true).put("state", state)
     private fun error(code: String, msg: String) = JSONObject().put("ok", false).put("error", code).put("msg", msg)
+    private fun notPaired() = error("not_paired", "this computer isn't paired with the phone. Run `hearsay pair`")
 
     private fun send(out: OutputStream, reply: JSONObject) {
         out.write((reply.toString() + "\n").toByteArray())
@@ -332,6 +364,8 @@ class PhoneServer(private val service: KeyPressService) {
     companion object {
         private const val TAG = "Hearsay"
         private const val PORT = 47800
+        // A press is one connection and pairing another; more than this at once is abuse.
+        private const val MAX_CONNECTIONS = 8
         const val SERVICE_TYPE = "_hearsay._tcp"
 
         /** The port the server listens on, 0 when it isn't running. */

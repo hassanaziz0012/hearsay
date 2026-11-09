@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -35,9 +37,6 @@ type pairedPhone struct {
 	// Hex SHA-256 of the phone's certificate; any other certificate is refused.
 	Cert string `json:"cert"`
 }
-
-// The keyboard the bash prototype (pc/rambler-pc) used when it had no keyboard file.
-const pixelboard = "com.akshaykadam.pixelboard/com.android.inputmethod.latin.LatinIME"
 
 func configDir() string {
 	d, err := os.UserConfigDir()
@@ -72,9 +71,6 @@ func loadConfig() (config, error) {
 	var c config
 	b, err := os.ReadFile(configPath())
 	if errors.Is(err, fs.ErrNotExist) {
-		if c, ok := migrateConfig(); ok {
-			return c, saveConfig(c)
-		}
 		return c, nil
 	}
 	if err != nil {
@@ -97,26 +93,6 @@ func saveConfig(c config) error {
 	return writeAtomic(configPath(), append(b, '\n'))
 }
 
-// migrateConfig reads the bash prototype's config (~/.config/rambler-pc): "keyboard" holds
-// the IME component (Pixelboard when absent).
-func migrateConfig() (config, bool) {
-	d, err := os.UserConfigDir()
-	if err != nil {
-		return config{}, false
-	}
-	old := filepath.Join(d, "rambler-pc")
-	if _, err := os.Stat(old); err != nil {
-		return config{}, false
-	}
-	c := config{Keyboard: pixelboard}
-	if b, err := os.ReadFile(filepath.Join(old, "keyboard")); err == nil {
-		if k := strings.TrimSpace(string(b)); k != "" {
-			c.Keyboard = k
-		}
-	}
-	return c, true
-}
-
 // status tells the tray what the last press is doing: "idle", "busy", "listening",
 // "error", or "retry" (an error the next press recovers from), a tab, and a message.
 func (a *app) status(st, msg string) {
@@ -134,12 +110,25 @@ func readStatus() (st, msg string, age time.Duration) {
 	return st, msg, time.Since(fi.ModTime())
 }
 
+// writeAtomic replaces path with b (mode 0600). Each write has its own temporary file, so
+// two processes writing at once (the tray and a press) don't clash.
 func writeAtomic(path string, b []byte) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmp := f.Name()
+	_, err = f.Write(b)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		os.Remove(tmp)
+	}
+	return err
 }
 
 // lockRun takes the lock that keeps two presses from driving the phone at once. A lock
@@ -160,22 +149,95 @@ func lockRun() (unlock func(), err error) {
 					os.Exit(130)
 				}
 			}()
-			return func() { signal.Stop(sig); close(sig); os.Remove(p) }, nil
+			// Keep the lock fresh while it's held (diagnose waits on the user for minutes),
+			// so only a holder that died leaves a lock old enough to be taken over.
+			stop := make(chan struct{})
+			go func() {
+				t := time.NewTicker(lockRefresh)
+				defer t.Stop()
+				for {
+					select {
+					case <-stop:
+						return
+					case now := <-t.C:
+						os.Chtimes(p, now, now)
+					}
+				}
+			}()
+			return func() { close(stop); signal.Stop(sig); close(sig); os.Remove(p) }, nil
 		}
-		if fi, err := os.Stat(p); err == nil && time.Since(fi.ModTime()) > time.Minute {
+		if fi, err := os.Stat(p); err == nil && time.Since(fi.ModTime()) > lockStale {
 			os.Remove(p)
 			continue
 		}
 		break
 	}
-	return nil, errors.New("still busy with the last press")
+	return nil, errBusy
 }
 
-// openLog opens the log for runs without a terminal, starting a new one past 1 MB.
-func openLog() (*os.File, error) {
-	p := runFile("hearsay.log")
-	if fi, err := os.Stat(p); err == nil && fi.Size() > 1<<20 {
-		os.Rename(p, p+".1")
+// A lock untouched for lockStale was left by a process that died; its holder touches it
+// every lockRefresh.
+const (
+	lockStale   = time.Minute
+	lockRefresh = 15 * time.Second
+)
+
+// errBusy: a press came while another one (in this or another process) was running.
+var errBusy = errors.New("still busy with the last press")
+
+// openLog opens the log for runs without a terminal. Past 1 MB it starts a new one, also
+// while it is open (the tray runs for days).
+func openLog() (io.Writer, error) {
+	l := &rotatingLog{path: runFile("hearsay.log")}
+	if err := l.open(); err != nil {
+		return nil, err
 	}
-	return os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	return l, nil
+}
+
+const logMax = 1 << 20
+
+// rotatingLog is an append-only log file that moves itself to path.1 past logMax.
+type rotatingLog struct {
+	mu   sync.Mutex
+	path string
+	f    *os.File
+	size int64
+}
+
+func (l *rotatingLog) open() error {
+	if fi, err := os.Stat(l.path); err == nil && fi.Size() > logMax {
+		os.Rename(l.path, l.path+".1")
+	}
+	f, err := os.OpenFile(l.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	l.f, l.size = f, 0
+	if fi, err := f.Stat(); err == nil {
+		l.size = fi.Size()
+	}
+	return nil
+}
+
+func (l *rotatingLog) Write(b []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.size > logMax {
+		// Another process may have rotated it already: then only reopen.
+		if fi, err := os.Stat(l.path); err == nil {
+			if cur, err := l.f.Stat(); err == nil && os.SameFile(fi, cur) {
+				os.Rename(l.path, l.path+".1")
+			}
+		}
+		old := l.f
+		if err := l.open(); err != nil {
+			l.f = old // keep writing where we were
+		} else {
+			old.Close()
+		}
+	}
+	n, err := l.f.Write(b)
+	l.size += int64(n)
+	return n, err
 }

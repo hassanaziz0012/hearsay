@@ -386,7 +386,7 @@ async function enterInstall() {
   $("wz-release").textContent = "the download link";
   if (qrDrawn) return;
   const q = await api("InstallQR");
-  $("qr").innerHTML = `<svg viewBox="0 0 ${q.size} ${q.size}" shape-rendering="crispEdges"><path fill="#15161a" d="${q.path}"/></svg>`;
+  $("qr").innerHTML = `<svg viewBox="0 0 ${q.size} ${q.size}" shape-rendering="crispEdges"><path fill="#050f16" d="${q.path}"/></svg>`;
   qrDrawn = true;
 }
 $("wz-release").onclick = () => Browser.OpenURL(state.releaseUrl);
@@ -574,12 +574,13 @@ $("wz-try-btn").onclick = async () => {
   } else if (trying === "listening") {
     setTry("working", "Getting the text…");
     try {
-      const text = await api("TestStop");
+      const { text, copied } = await api("TestStop");
       const q = $("wz-heard");
       if (text.trim()) {
         q.textContent = text;
         q.hidden = false;
-        setTry("ready", "That's what Rambler heard. It's on the clipboard too.");
+        setTry("ready", copied ? "That's what Rambler heard. It's on the clipboard too."
+          : "That's what Rambler heard, but it couldn't be copied to the clipboard.");
         $("wz-test-next").textContent = "Continue";
         $("wz-test-next").classList.add("primary");
       } else {

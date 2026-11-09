@@ -196,7 +196,7 @@ func (api *API) FindPhones(seconds int) []PhoneInfo {
 func (api *API) CheckAddress(addr string) (PhoneInfo, error) {
 	addr = withPort(strings.TrimSpace(addr))
 	if host, _, _ := net.SplitHostPort(addr); net.ParseIP(host) == nil {
-		return PhoneInfo{}, errors.New("that isn't an address like 192.168.1.20")
+		return PhoneInfo{}, errors.New("that isn't an address like 192.168.1.20:47800")
 	}
 	c, err := net.DialTimeout("tcp", addr, 3*time.Second)
 	if err != nil {
@@ -310,8 +310,8 @@ func (g *gui) updateConfig(change func(*config)) error {
 
 func (api *API) TestStart() error { return api.g.a.testStart() }
 
-// TestStop ends the test and returns what Rambler heard.
-func (api *API) TestStop() (string, error) { return api.g.a.testStop() }
+// TestStop ends the test and returns what Rambler heard and whether it got copied.
+func (api *API) TestStop() (testResult, error) { return api.g.a.testStop() }
 
 // Setup: finish
 

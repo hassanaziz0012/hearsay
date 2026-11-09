@@ -69,13 +69,16 @@ class Session(private val service: KeyPressService) {
         if (phase == Phase.INTERRUPTED) restore()
         val current = service.getSystemService(InputMethodManager::class.java).currentInputMethodInfo?.id
         // Already on the target keyboard (Rambler in stock Gboard): nothing to switch back to.
+        // An unknown current keyboard still gets switched, just not switched back.
         val prev = current?.takeIf { it != ime }
         val awake = service.getSystemService(PowerManager::class.java).isInteractive
-        prefs.edit().putBoolean("active", true).putString("prev", prev).putBoolean("awake", awake).apply()
+        // commit, not apply: if the process dies right after, the next press must still
+        // find the session to put the phone back (INTERRUPTED).
+        prefs.edit().putBoolean("active", true).putString("prev", prev).putBoolean("awake", awake).commit()
         phase = Phase.STARTING
         dbg("prev ime=$prev awake=$awake")
         try {
-            if (prev != null && !service.softKeyboardController.switchToInputMethod(ime)) {
+            if (current != ime && !service.softKeyboardController.switchToInputMethod(ime)) {
                 throw Failure("switch_failed", "couldn't switch to the keyboard $ime. Is it enabled on the phone?")
             }
             // turnScreenOn and showWhenLocked bring it up over the lock screen. A bound
@@ -95,13 +98,18 @@ class Session(private val service: KeyPressService) {
             var listenBy = 0L
             var pressedAt = 0L
             var presses = 0
+            var lastMiss: String? = null
             while (!listening()) {
                 val now = SystemClock.uptimeMillis()
                 if (now - opened >= FIRST_PRESS_MS && (pressedAt == 0L || (presses < 2 && now - pressedAt > RETRY_MS))) {
-                    if (press("mic", pkg) == 1) {
+                    val missed = press("mic", pkg)
+                    if (missed == null) {
                         pressedAt = SystemClock.uptimeMillis()
                         if (listenBy == 0L) listenBy = pressedAt + 4500
                         dbg("pressed mic (${++presses})")
+                    } else if (missed != lastMiss) {
+                        lastMiss = missed
+                        dbg("mic not pressed: $missed")
                     }
                 }
                 if (listenBy == 0L && now > keyboardBy) throw Failure("keyboard_not_up", "the keyboard didn't come up")
@@ -136,7 +144,8 @@ class Session(private val service: KeyPressService) {
         // Rambler may already have stopped on its own; pressing then would start a new session.
         if (listening()) {
             val key = if (paste) "mic" else "close"
-            dbg("pressed $key (result ${press(key, ime.substringBefore('/'))})")
+            val missed = press(key, ime.substringBefore('/'))
+            dbg(if (missed == null) "pressed $key" else "$key not pressed: $missed")
         }
         if (!paste) {
             reply("")
@@ -144,13 +153,28 @@ class Session(private val service: KeyPressService) {
         }
         val end = SystemClock.uptimeMillis() + timeoutMs
         var arrived = DictateActivity.text.isNotEmpty()
+        // When Rambler stopped recording: the text comes after that, but if none has come
+        // NOTHING_MS later, nothing was heard.
+        var stoppedAt = 0L
         while (SystemClock.uptimeMillis() < end) {
             if (!arrived && DictateActivity.text.isNotEmpty()) {
                 arrived = true
                 dbg("text arrived")
             }
-            val quiet = System.currentTimeMillis() - DictateActivity.changedAt
-            if (DictateActivity.text.isNotEmpty() && quiet >= settleMs && !listening()) break
+            val now = SystemClock.uptimeMillis()
+            if (listening()) {
+                stoppedAt = 0L
+            } else if (stoppedAt == 0L) {
+                stoppedAt = now
+            }
+            val quiet = now - DictateActivity.changedAt
+            if (stoppedAt != 0L) {
+                if (DictateActivity.text.isNotEmpty() && quiet >= settleMs) break
+                if (DictateActivity.text.isEmpty() && now - stoppedAt >= NOTHING_MS) {
+                    dbg("nothing heard")
+                    break
+                }
+            }
             SystemClock.sleep(50)
         }
         val text = DictateActivity.text
@@ -179,10 +203,10 @@ class Session(private val service: KeyPressService) {
     private fun listening() = audio.activeRecordingConfigurations
         .any { it.clientAudioSource == MediaRecorder.AudioSource.VOICE_RECOGNITION }
 
-    /** KeyPressService.press, waited for: 1 pressed, 2 not on screen, 3 unknown key. */
-    private fun press(key: String, pkg: String): Int {
-        var result = 2
-        awaitOnMain { done -> service.press(key, pkg) { code, _ -> result = code; done() } }
+    /** KeyPressService.press, waited for: null when pressed, else why it wasn't. */
+    private fun press(key: String, pkg: String): String? {
+        var result: String? = "no answer from the key presser"
+        awaitOnMain { done -> service.press(key, pkg) { missed -> result = missed; done() } }
         return result
     }
 
@@ -199,5 +223,6 @@ class Session(private val service: KeyPressService) {
         const val TAG = "Hearsay"
         const val FIRST_PRESS_MS = 1000
         const val RETRY_MS = 2000
+        const val NOTHING_MS = 5000L
     }
 }

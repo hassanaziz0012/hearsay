@@ -17,7 +17,9 @@ var icons embed.FS
 
 const (
 	errorIconFor = 10 * time.Second // a plain error goes back to the idle icon after this
-	busyStale    = 30 * time.Second // "busy" this old means the process died mid-press
+	// "busy" this old means the process died mid-press. The slowest press takes about 31 s
+	// (3 s dial, 5 s mDNS, 3 s dial, then up to settleTimeoutMs+12 s for the reply).
+	busyStale = 45 * time.Second
 )
 
 type trayState struct {

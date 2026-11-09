@@ -106,8 +106,9 @@ func (a *app) setup(args []string) error {
 			{"Keyboard", a.setupKeyboardNet},
 		}
 	}
+	testOK := true
 	steps = append(steps,
-		step{"Test", a.setupTest},
+		step{"Test", func() error { testOK = a.setupTest(); return nil }},
 		step{"Shortcut and start at login", a.setupDesktop})
 	for i, s := range steps {
 		fmt.Printf("\n[%d/%d] %s\n", i+1, len(steps), s.name)
@@ -115,7 +116,11 @@ func (a *app) setup(args []string) error {
 			return err
 		}
 	}
-	fmt.Println("\nAll set.")
+	if testOK {
+		fmt.Println("\nAll set.")
+	} else {
+		fmt.Println("\nSetup is done, but the test didn't work (see above). Try again with `hearsay toggle`.")
+	}
 	if path == "adb" {
 		fmt.Println("Dictation doesn't use adb, so you can turn USB or wireless debugging off again.")
 	}
@@ -139,11 +144,16 @@ var stdinLines = sync.OnceValue(func() <-chan string {
 	return ch
 })
 
+// errNoAnswers: stdin ended while a question waited for an answer.
+var errNoAnswers = errors.New("this needs answers on the terminal")
+
+// readLine reads an answer. Without one it panics with errNoAnswers, which main turns
+// into an error after deferred clean-ups (putting the phone back, the lock) have run.
 func readLine() string {
 	l, ok := <-stdinLines()
 	if !ok {
-		fmt.Println("\nhearsay: setup needs answers on the terminal")
-		os.Exit(1)
+		fmt.Println()
+		panic(errNoAnswers)
 	}
 	return l
 }
@@ -305,13 +315,21 @@ func (a *app) setupConnect() error {
 		}
 	}
 	model, _ := a.shell(5*time.Second, "getprop ro.product.model")
-	sdkOut, _ := a.shell(5*time.Second, "getprop ro.build.version.sdk")
 	release, _ := a.shell(5*time.Second, "getprop ro.build.version.release")
-	if sdk, err := strconv.Atoi(sdkOut); err == nil && sdk < 34 {
+	if sdk := a.sdkLevel(); sdk != 0 && sdk < 34 {
 		return fmt.Errorf("%s runs Android %s; Hearsay needs Android 14 or newer", model, release)
 	}
 	done("%s, Android %s (%s)", model, release, a.serial)
 	return saveConfig(a.cfg)
+}
+
+// sdkLevel is the phone's Android API level (0 if adb can't tell), asked once.
+func (a *app) sdkLevel() int {
+	if a.sdk == 0 {
+		out, _ := a.shell(5*time.Second, "getprop ro.build.version.sdk")
+		a.sdk, _ = strconv.Atoi(out)
+	}
+	return a.sdk
 }
 
 // adbPair walks through Wireless debugging pairing, finding the phone with mDNS so the user
@@ -476,7 +494,7 @@ func (a *app) setupInstall(apkFile string) error {
 
 // serviceOn reports whether the system has the key presser running (bound).
 func (a *app) serviceOn() bool {
-	out, _ := a.shell(5*time.Second, "dumpsys activity services "+pkg+"/.KeyPressService")
+	out, _ := a.shell(5*time.Second, "dumpsys activity services "+serviceShort)
 	return strings.Contains(out, "ServiceRecord{")
 }
 
@@ -533,8 +551,7 @@ func (a *app) setupService() error {
 // adb can grant it), so the computer can reach the phone without adb.
 func (a *app) setupLocalNetwork() error {
 	const perm = "android.permission.ACCESS_LOCAL_NETWORK"
-	out, _ := a.shell(5*time.Second, "getprop ro.build.version.sdk")
-	if sdk, _ := strconv.Atoi(out); sdk < 37 {
+	if a.sdkLevel() < 37 {
 		return nil // no such permission before Android 17
 	}
 	if _, rc := a.shell(10*time.Second, "pm grant "+pkg+" "+perm); rc != 0 {
@@ -652,46 +669,59 @@ func (a *app) setupMic(kb string) error {
 
 // 6. Test
 
-func (a *app) setupTest() error {
+// setupTest runs a test dictation if the user wants one; false if it didn't work (it
+// doesn't stop setup: the rest is still worth doing).
+func (a *app) setupTest() bool {
 	if !yes("Try a dictation now?", true) {
-		return nil
+		return true
 	}
 	if err := a.testStart(); err != nil {
-		say("The test didn't start (see above). Fix that, then run setup again.")
-		return nil
+		say("The test didn't start (see above).")
+		return false
 	}
 	ask("Rambler is listening. Say something to the phone, then press Enter here.")
 	fmt.Println()
-	text, err := a.testStop()
+	r, err := a.testStop()
 	switch {
 	case err != nil:
 		say("The test failed (see above).")
-	case strings.TrimSpace(text) == "":
+		return false
+	case strings.TrimSpace(r.Text) == "":
 		say("Rambler heard nothing. Check that Rambler (not regular voice typing) is chosen")
 		say("in the keyboard's voice typing settings, then try again with hearsay toggle.")
+		return false
+	case !r.Copied:
+		fmt.Println()
+		done("that's what Rambler heard (but it couldn't be copied to the clipboard)")
 	default:
 		fmt.Println()
 		done("that's what Rambler heard (also copied to the clipboard)")
 	}
-	return nil
+	return true
+}
+
+// testResult is what a test dictation brought back.
+type testResult struct {
+	Text   string `json:"text"`
+	Copied bool   `json:"copied"` // the text is on the clipboard
 }
 
 // testStart starts a test dictation; testStop ends it and returns what Rambler heard,
 // copied to the clipboard but not pasted (the focus is on setup, not on a text field).
 func (a *app) testStart() error { return a.action(a.start) }
 
-func (a *app) testStop() (string, error) {
-	var text string
+func (a *app) testStop() (testResult, error) {
+	var r testResult
 	err := a.action(func() error {
 		paste := a.paste
 		a.paste = false
 		defer func() { a.paste = paste }()
-		a.heard = ""
+		a.heard, a.copied = "", false
 		err := a.stop(true)
-		text = a.heard
+		r = testResult{a.heard, a.copied}
 		return err
 	})
-	return text, err
+	return r, err
 }
 
 // 7. Shortcut and start at login

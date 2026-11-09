@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,11 +51,18 @@ type app struct {
 	cfg     config
 	adbPath string
 	serial  string
+	sdk     int // the phone's API level, once setup has asked (sdkLevel)
 	paste   bool
 	debug   bool
 	log     io.Writer // debug lines and errors: stderr, or the log file without a terminal
 	stdout  bool      // print the dictated text (a CLI run, not the tray)
 	heard   string    // the text the last stop brought back
+	copied  bool      // whether that text got onto the clipboard
+
+	// Windows has no notifications here: errors from a press nobody can see (no terminal,
+	// no tray) are kept in unseen and shown in a message box when the press is over.
+	alertErrors bool
+	unseen      []string
 
 	mu sync.Mutex // one action at a time within this process (the tray)
 	t0 time.Time  // start of the current action, for log timings
@@ -89,30 +97,11 @@ func main() {
 	}
 	a, err := newApp(cmd)
 	if err == nil {
-		switch cmd {
-		case "toggle":
-			err = a.action(a.toggle)
-		case "start":
-			err = a.action(a.start)
-		case "stop":
-			err = a.action(func() error { return a.stop(true) })
-		case "cancel":
-			err = a.action(func() error { return a.stop(false) })
-		case "diagnose":
-			err = a.action(a.diagnose)
-		case "run", "gui":
-			err = a.runGUI(cmd == "gui")
-		case "setup":
-			err = a.setup(args)
-			if ownConsole() {
-				// Explorer's console window would vanish before the last lines are read.
-				if err != nil {
-					fmt.Println("hearsay:", err)
-				}
-				ask("\nPress Enter to close this window.")
-			}
-		case "pair":
-			err = a.pairPhone(args)
+		err = runCmd(a, cmd, args)
+	}
+	if a != nil {
+		for _, msg := range a.unseen {
+			a.alert(msg)
 		}
 	}
 	if err != nil {
@@ -128,6 +117,44 @@ func main() {
 	}
 }
 
+// runCmd runs one command. A question nobody can answer (readLine) ends it with an error.
+func runCmd(a *app, cmd string, args []string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if r != errNoAnswers {
+				panic(r)
+			}
+			err = errNoAnswers
+		}
+	}()
+	switch cmd {
+	case "toggle":
+		err = a.action(a.toggle)
+	case "start":
+		err = a.action(a.start)
+	case "stop":
+		err = a.action(func() error { return a.stop(true) })
+	case "cancel":
+		err = a.action(func() error { return a.stop(false) })
+	case "diagnose":
+		err = a.action(a.diagnose)
+	case "run", "gui":
+		err = a.runGUI(cmd == "gui")
+	case "setup":
+		err = a.setup(args)
+		if ownConsole() {
+			// Explorer's console window would vanish before the last lines are read.
+			if err != nil {
+				fmt.Println("hearsay:", err)
+			}
+			ask("\nPress Enter to close this window.")
+		}
+	case "pair":
+		err = a.pairPhone(args)
+	}
+	return err
+}
+
 func newApp(cmd string) (*app, error) {
 	if err := os.MkdirAll(runDir(), 0o700); err != nil {
 		return nil, err
@@ -140,6 +167,12 @@ func newApp(cmd string) (*app, error) {
 			a.log, a.debug = f, true
 			fmt.Fprintf(f, "--- %s %s\n", time.Now().Format("2006-01-02 15:04:05"), cmd)
 		}
+	}
+
+	switch cmd {
+	case "toggle", "start", "stop", "cancel":
+		// A desktop shortcut's console window closes before anyone reads it.
+		a.alertErrors = !isTerminal(os.Stderr) || ownConsole()
 	}
 
 	cfg, err := loadConfig()
@@ -167,7 +200,7 @@ func newApp(cmd string) (*app, error) {
 // still running: a press while busy is ignored rather than racing it.
 func (a *app) action(fn func() error) error {
 	if !a.mu.TryLock() {
-		return errors.New("still busy with the last press")
+		return errBusy
 	}
 	defer a.mu.Unlock()
 	unlock, err := lockRun()
@@ -199,6 +232,16 @@ func (a *app) failAs(msg string, retry bool) error {
 		a.status("error", msg)
 	}
 	return reported{msg}
+}
+
+// sentence ends msg with a full stop unless it already ends a sentence, so another
+// sentence can follow it.
+func sentence(msg string) string {
+	msg = strings.TrimRight(msg, " ")
+	if msg == "" || strings.ContainsAny(msg[len(msg)-1:], ".?!") {
+		return msg
+	}
+	return msg + "."
 }
 
 func isTerminal(f *os.File) bool { return f != nil && term.IsTerminal(int(f.Fd())) }

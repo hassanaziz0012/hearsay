@@ -31,7 +31,7 @@ const methods = {
     { id: "com.akshaykadam.pixelboard/com.android.inputmethod.latin.LatinIME", label: "Pixelboard", enabled: true, mic: false, selected: false },
   ],
   TestStart: () => wait(600),
-  TestStop: async () => { await wait(900); return "Remind me to send the invoice to Sam before Friday."; },
+  TestStop: async () => { await wait(900); return { text: "Remind me to send the invoice to Sam before Friday.", copied: true }; },
   CheckConnection: async () => { await wait(600); return "Pixel 9 answers."; },
   Forget: () => "Forgotten on both sides.",
   SaveReport: () => "/home/you/hearsay-report.txt",

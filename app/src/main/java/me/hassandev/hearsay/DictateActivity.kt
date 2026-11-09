@@ -7,6 +7,7 @@ import android.media.AudioManager
 import android.media.AudioRecordingConfiguration
 import android.media.MediaRecorder
 import android.os.Bundle
+import android.os.SystemClock
 import android.os.Handler
 import android.os.Looper
 import android.text.Editable
@@ -16,7 +17,6 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsAnimation
-import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -56,12 +56,7 @@ class DictateActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         palette = Palette(this)
-        window.decorView.setBackgroundColor(palette.surface)
-        if (!palette.dark) {
-            val light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
-                WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-            window.insetsController?.setSystemBarsAppearance(light, light)
-        }
+        applySurface(palette)
         setContentView(buildLayout())
         current = WeakReference(this)
         handle(intent)
@@ -97,11 +92,11 @@ class DictateActivity : Activity() {
 
     private fun buildLayout(): View {
         mark = StatusShapeView(this)
-        val appName = text(TextStyle.LABEL_LARGE, palette.primary).apply { text = "Hearsay" }
-        headline = text(TextStyle.HEADLINE_MEDIUM_EMPHASIZED, palette.onSurface).apply {
+        val appName = textView(TextStyle.LABEL_LARGE, palette.primary, "Hearsay")
+        headline = textView(TextStyle.HEADLINE_MEDIUM_EMPHASIZED, palette.onSurface).apply {
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
-        supporting = text(TextStyle.BODY_MEDIUM, palette.onSurfaceVariant)
+        supporting = textView(TextStyle.BODY_MEDIUM, palette.onSurfaceVariant)
         val titles = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(appName)
@@ -214,8 +209,9 @@ class DictateActivity : Activity() {
                 mark.show(StatusShapeView.Look(9, 0.07f, palette.primary, palette.onPrimary, mic))
             }
             State.DONE -> {
-                headline.text = "Sent"
-                supporting.text = "The text is on your PC clipboard"
+                // The text goes to the computer once Rambler has finished rewriting it.
+                headline.text = "Got it"
+                supporting.text = "Sending the text to your computer…"
                 mark.show(StatusShapeView.Look(4, 0.12f, palette.tertiaryContainer,
                     palette.onTertiaryContainer, getDrawable(R.drawable.ic_check)!!))
             }
@@ -231,14 +227,7 @@ class DictateActivity : Activity() {
 
     private fun textChanged(text: String) {
         Companion.text = text
-        changedAt = System.currentTimeMillis()
-    }
-
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-
-    private fun text(style: TextStyle, color: Int) = TextView(this).apply {
-        style.applyTo(this)
-        setTextColor(color)
+        changedAt = SystemClock.uptimeMillis()
     }
 
     companion object {
@@ -247,10 +236,11 @@ class DictateActivity : Activity() {
         var keyboardSettled = false
             private set
 
-        /** The field's text and when it last changed (ms since the epoch). */
+        /** The field's text. */
         @Volatile
         var text = ""
             private set
+        /** When [text] last changed, in SystemClock.uptimeMillis (immune to clock changes). */
         @Volatile
         var changedAt = 0L
             private set

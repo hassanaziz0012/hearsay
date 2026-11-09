@@ -3,10 +3,8 @@ package main
 import (
 	"html"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 // Only Linux has Wayland, where the desktop's shortcut stands in for the global hotkey.
@@ -60,14 +58,4 @@ func setAutostart(exe string, on bool) error {
 		return err
 	}
 	return os.WriteFile(p, []byte(plist), 0o644)
-}
-
-func startDetached(exe string, args ...string) error {
-	cmd := exec.Command(exe, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	done("started `hearsay run`")
-	return cmd.Process.Release()
 }

@@ -77,7 +77,7 @@ func (a *app) setupServiceManual() (string, error) {
 	say("     next to Local network in the app).")
 	say("The phone must be on the same Wi-Fi as this computer.")
 	say("Waiting for the phone… (if it never shows up, type the address the app shows")
-	say("under This phone)")
+	say("under This phone, e.g. 192.168.1.20:47800)")
 
 	found := make(chan []phoneService, 1)
 	stop := make(chan struct{})
@@ -111,7 +111,7 @@ func (a *app) setupServiceManual() (string, error) {
 					addr = net.JoinHostPort(addr, defaultPort)
 				}
 				if host, _, _ := net.SplitHostPort(addr); net.ParseIP(host) == nil {
-					say("That isn't an address like 192.168.1.20.")
+					say("That isn't an address like 192.168.1.20:47800.")
 					continue
 				}
 				c, err := net.DialTimeout("tcp", addr, 3*time.Second)
@@ -168,15 +168,31 @@ func (a *app) pingPhone() error {
 
 // phoneIP is the phone's Wi-Fi address, asked over adb ("" if unknown).
 func (a *app) phoneIP() string {
-	out, _ := a.shell(5*time.Second, "ip -4 -o addr show wlan0")
-	f := strings.Fields(out)
-	for i := 0; i+1 < len(f); i++ {
-		if f[i] == "inet" {
-			ip, _, _ := strings.Cut(f[i+1], "/")
+	out, _ := a.shell(5*time.Second, "ip -4 -o addr show")
+	return wifiIP(out)
+}
+
+// wifiIP picks the phone's local network address from `ip -4 -o addr show`: a Wi-Fi
+// interface (wlan0 on most phones, but not all), else Ethernet. Mobile data (rmnet,
+// ccmni), VPNs (tun) and loopback are no use to the PC.
+func wifiIP(out string) string {
+	var eth string
+	for _, line := range strings.Split(out, "\n") {
+		// "3: wlan0    inet 192.168.1.23/24 brd 192.168.1.255 scope global wlan0 ..."
+		f := strings.Fields(line)
+		if len(f) < 4 || f[2] != "inet" {
+			continue
+		}
+		iface := strings.TrimSuffix(f[1], ":")
+		ip, _, _ := strings.Cut(f[3], "/")
+		switch {
+		case strings.HasPrefix(iface, "wlan"):
 			return ip
+		case strings.HasPrefix(iface, "eth") && eth == "":
+			eth = ip
 		}
 	}
-	return ""
+	return eth
 }
 
 // 4. Keyboard

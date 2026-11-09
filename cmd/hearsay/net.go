@@ -28,7 +28,6 @@ import (
 // protocol): one TLS 1.3 connection per request, both sides pinning the other's
 // certificate, one JSON line each way. The phone keeps the dictation's state and puts
 // itself back after a stop, so there is no state file and nothing to restore here.
-type netTransport struct{ *app }
 
 const defaultPort = "47800"
 
@@ -45,32 +44,37 @@ type phoneReply struct {
 	Keyboards []phoneKeyboard `json:"keyboards"`
 }
 
-func (a netTransport) toggle() error {
+// toggle starts a dictation or, if the phone is listening, stops it and pastes.
+func (a *app) toggle() error {
 	// Only the phone knows whether it is listening; the tray's last state is a good guess
-	// for what to show meanwhile.
+	// for what to show meanwhile. After "retry" (a press that lost the phone) it may be
+	// either, so a failure now is a retry too.
 	st, _, _ := readStatus()
-	if st == "listening" {
+	switch st {
+	case "listening":
 		a.status("busy", "Finishing…")
-	} else {
+	case "retry":
+		a.status("busy", "Working…")
+	default:
 		a.status("busy", "Starting…")
 	}
-	r, err := a.call("toggle", st == "listening")
+	r, err := a.call("toggle", st == "listening" || st == "retry")
 	if err != nil {
 		return err
 	}
-	return a.finish(r, true)
+	return a.showReply(r, true)
 }
 
-func (a netTransport) start() error {
+func (a *app) start() error {
 	a.status("busy", "Starting…")
 	r, err := a.call("start", false)
 	if err != nil {
 		return err
 	}
-	return a.finish(r, true)
+	return a.showReply(r, true)
 }
 
-func (a netTransport) stop(paste bool) error {
+func (a *app) stop(paste bool) error {
 	op := "cancel"
 	if paste {
 		op = "stop"
@@ -83,11 +87,11 @@ func (a netTransport) stop(paste bool) error {
 	if err != nil {
 		return err
 	}
-	return a.finish(r, paste)
+	return a.showReply(r, paste)
 }
 
-// finish shows what a successful request led to.
-func (a netTransport) finish(r phoneReply, paste bool) error {
+// showReply shows what a successful request led to.
+func (a *app) showReply(r phoneReply, paste bool) error {
 	switch r.State {
 	case "listening":
 		a.listening()
@@ -106,14 +110,14 @@ func (a netTransport) finish(r phoneReply, paste bool) error {
 // call sends one request to the paired phone and returns its reply. Failures have been
 // reported to the user. stopping: a dictation may be running on the phone, so if the
 // phone can't be reached, the next press finishes it (the tray shows "retry").
-func (a netTransport) call(op string, stopping bool) (phoneReply, error) {
+func (a *app) call(op string, stopping bool) (phoneReply, error) {
 	if err := a.requireKeyboard(); err != nil {
 		return phoneReply{}, err
 	}
 	conn, err := a.dialPhone()
 	if err != nil {
 		if stopping {
-			return phoneReply{}, a.failAs(err.Error()+" Then press again", true)
+			return phoneReply{}, a.failAs(sentence(err.Error())+" Then press again.", true)
 		}
 		return phoneReply{}, a.failAs(err.Error(), false)
 	}
@@ -130,7 +134,7 @@ func (a netTransport) call(op string, stopping bool) (phoneReply, error) {
 		// The phone may have done it anyway (and is listening, or put itself back); the
 		// next press finds out which.
 		a.logf("request: %v", err)
-		return r, a.failAs("lost the connection to the phone. Press again", true)
+		return r, a.failAs("lost the connection to the phone. Press again.", true)
 	}
 	if !r.OK {
 		msg := r.Msg
@@ -142,8 +146,15 @@ func (a netTransport) call(op string, stopping bool) (phoneReply, error) {
 	return r, nil
 }
 
-// exchange writes req as one JSON line and reads the one-line reply.
+// exchange writes req as one JSON line and reads the one-line reply, on a connection
+// used for one request.
 func exchange(conn net.Conn, req any, timeout time.Duration) (phoneReply, error) {
+	return exchangeOn(conn, bufio.NewReader(conn), req, timeout)
+}
+
+// exchangeOn is exchange on a connection used for several requests (pairing): rd must be
+// the same reader every time, so nothing it has read ahead is lost.
+func exchangeOn(conn net.Conn, rd *bufio.Reader, req any, timeout time.Duration) (phoneReply, error) {
 	var r phoneReply
 	conn.SetDeadline(time.Now().Add(timeout))
 	b, err := json.Marshal(req)
@@ -153,11 +164,26 @@ func exchange(conn net.Conn, req any, timeout time.Duration) (phoneReply, error)
 	if _, err := conn.Write(append(b, '\n')); err != nil {
 		return r, err
 	}
-	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	line, err := rd.ReadBytes('\n')
 	if err != nil {
 		return r, err
 	}
 	return r, json.Unmarshal(line, &r)
+}
+
+// savePhoneAddr records the phone's new address in the config file as it is now, not as
+// this process loaded it: the tray runs for days, and setup or the user may have changed
+// the config since.
+func savePhoneAddr(cert, addr string) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	if cfg.Phone == nil || cfg.Phone.Cert != cert {
+		return nil // unpaired or paired with another phone since
+	}
+	cfg.Phone.Addr = addr
+	return saveConfig(cfg)
 }
 
 // dialPhone connects to the paired phone: at its last known address, else wherever mDNS
@@ -192,7 +218,7 @@ func (a *app) dialPhone() (*tls.Conn, error) {
 	}
 	if addr != p.Addr {
 		p.Addr = addr
-		if err := saveConfig(a.cfg); err != nil {
+		if err := savePhoneAddr(p.Cert, addr); err != nil {
 			a.logf("save address: %v", err)
 		}
 	}
@@ -248,8 +274,16 @@ func loadIdentity() (tls.Certificate, error) {
 // newIdentity creates this computer's key pair (ECDSA P-256) and certificate, unless it
 // exists. The private key stays in the config dir, readable only by the user.
 func newIdentity() (tls.Certificate, error) {
-	if id, err := loadIdentity(); err == nil {
+	id, err := loadIdentity()
+	if err == nil {
 		return id, nil
+	}
+	// A key that exists but can't be used isn't replaced quietly: the phone knows this
+	// computer by it, so a new one would break the pairing with a confusing message.
+	if _, serr := os.Stat(identityPath()); serr == nil {
+		return tls.Certificate{}, fmt.Errorf("this computer's key %s can't be used (%v). "+
+			"Delete it to make a new one, then pair again (and forget this computer in the phone app)",
+			identityPath(), err)
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

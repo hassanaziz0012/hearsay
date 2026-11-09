@@ -12,7 +12,7 @@ import android.view.accessibility.AccessibilityWindowInfo
  * Presses the target keyboard's header keys by resource id, wherever the keyboard has put
  * them, so the PC side doesn't depend on fixed tap coordinates. It also hosts PhoneServer,
  * the PC's network connection: the system keeps a bound accessibility service's process at
- * foreground priority, which keeps the socket reachable in Doze (CONNECTION-HANDOFF.md).
+ * foreground priority, which keeps the socket reachable in Doze.
  *
  * Session presses "mic" (the voice typing key, "Insert text" while Rambler listens) and
  * "close" (the left header key, which reads "Close Rambler" while it listens) of the
@@ -27,6 +27,8 @@ class KeyPressService : AccessibilityService() {
 
     override fun onServiceConnected() {
         instance = this
+        // Connected again without a destroy in between: the old server still holds the port.
+        server?.stop()
         server = PhoneServer(this).also { it.start() }
     }
 
@@ -40,26 +42,26 @@ class KeyPressService : AccessibilityService() {
     override fun onInterrupt() {}
 
     /**
-     * Taps `key` (mic or close) of the keyboard with package `ime` and calls `done` with 1
-     * (pressed), 2 (not on screen, with the reason) or 3 (unknown key). `done` runs on the
-     * main thread, so a caller there must not block waiting for it.
+     * Taps `key` (mic or close) of the keyboard with package `ime` and calls `done` with
+     * null once it is pressed, or with why it wasn't. `done` runs on the main thread, so a
+     * caller there must not block waiting for it.
      */
-    fun press(key: String, ime: String, done: (Int, String?) -> Unit) {
-        val id = (KEYBOARDS[ime] ?: GBOARD_KEYS)[key] ?: return done(3, null)
+    fun press(key: String, ime: String, done: (String?) -> Unit) {
+        val id = KEYS[key] ?: return done("unknown key $key")
         // Same process as DictateActivity, so its flag is readable directly.
-        if (!DictateActivity.keyboardSettled) return done(2, "keyboard not settled")
+        if (!DictateActivity.keyboardSettled) return done("keyboard not settled")
         val bounds = findKey("$ime:id/$id")
-            ?: return done(2, windows.joinToString { "${it.type}:${it.root?.childCount}" })
+            ?: return done("key not on screen; windows " + windows.joinToString { "${it.type}:${it.root?.childCount}" })
         // Keyboards handle raw touches rather than clicks, so tap the key's centre.
         val tap = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(tap, 0, 50))
             .build()
         val callback = object : GestureResultCallback() {
-            override fun onCompleted(g: GestureDescription) = done(1, null)
-            override fun onCancelled(g: GestureDescription) = done(2, "gesture cancelled")
+            override fun onCompleted(g: GestureDescription) = done(null)
+            override fun onCancelled(g: GestureDescription) = done("gesture cancelled")
         }
-        if (!dispatchGesture(gesture, callback, null)) done(2, "gesture refused")
+        if (!dispatchGesture(gesture, callback, null)) done("gesture refused")
     }
 
     private fun findKey(id: String): Rect? {
@@ -79,17 +81,12 @@ class KeyPressService : AccessibilityService() {
         var instance: KeyPressService? = null
             private set
 
-
-        // Resource ids (without the package prefix) of each keyboard's keys. Pixelboard is
-        // repackaged Gboard, so it shares Gboard's ids; any other package is assumed to be a
-        // Gboard build too. Stock Gboard's ids while Rambler listens are not yet verified.
-        private val GBOARD_KEYS = mapOf(
+        // Resource ids (without the package prefix) of the keys, the same in every keyboard
+        // with Rambler: stock Gboard and Gboard builds like Pixelboard (repackaged Gboard).
+        // Stock Gboard's ids while Rambler listens are not yet verified.
+        private val KEYS = mapOf(
             "mic" to "key_pos_header_power_key",
             "close" to "key_pos_header_access_points_menu",
-        )
-        private val KEYBOARDS = mapOf(
-            "com.google.android.inputmethod.latin" to GBOARD_KEYS,
-            "com.akshaykadam.pixelboard" to GBOARD_KEYS,
         )
     }
 }
