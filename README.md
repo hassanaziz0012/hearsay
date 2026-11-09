@@ -13,7 +13,7 @@ with.
 
 Rambler is Google's feature; Hearsay isn't affiliated with Google.
 
-**Status: v0.2, early testing.** Windows and Linux builds. macOS builds from source but
+**Status: v0.3, early testing.** Windows and Linux builds. macOS builds from source but
 hasn't been tested yet. See [Known limitations](#known-limitations) before you install.
 
 ## See it in action
@@ -127,6 +127,13 @@ On macOS, pasting needs the Accessibility permission for Hearsay (System Setting
 Please report problems in [Issues](https://github.com/hassanaziz0012/hearsay/issues) with
 the report or the log.
 
+## Update
+
+Quit Hearsay (tray menu > Quit Hearsay), unzip the new release over the same folder and
+double-click `hearsay` again. When a release updates the phone app too (the release notes
+say so), install the new `hearsay.apk` on the phone over the old one: your pairing and
+settings stay.
+
 ## Uninstall
 
 - Turn off Settings > Start at login, quit Hearsay (tray menu > Quit Hearsay) and delete the
@@ -149,7 +156,7 @@ The phone app, then the computer program with the app embedded (for setup's adb 
     go build -o bin/hearsay ./cmd/hearsay
 
 Release signing reads `keystore.properties` (not in git). Release builds can set the
-version with `-ldflags "-X main.version=v0.2.0"`.
+version with `-ldflags "-X main.version=v0.3.0"`.
 
 The window is made with [Wails v3](https://wails.io): a plain HTML, CSS and JS front end in
 `cmd/hearsay/frontend`, embedded in the binary, with no JS build step. Go 1.26 or newer.
