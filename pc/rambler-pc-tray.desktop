@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Rambler PC tray
-Comment=Tray indicator for Rambler PC dictation
-Exec=/home/hassan/Desktop/programming/rambler-pc/pc/rambler-pc-tray
-Icon=audio-input-microphone-symbolic
-X-GNOME-Autostart-enabled=true
-NoDisplay=true
