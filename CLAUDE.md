@@ -54,6 +54,9 @@ README covers what users see; this file covers working on the code.
   unless asked. Review/issue notes (`ISSUES-*.md`) stay uncommitted.
 - Code reviews: cite functions and files, not line numbers (they go stale fast).
 - When the phone app changes, bump `versionCode` and `versionName` in
-  `app/build.gradle.kts`. The signing key is in `keystore.properties` (gitignored); a
-  different key would force users to uninstall.
+  `app/build.gradle.kts`. Signing key: `~/.config/hearsay-signing/hearsay-release.jks`
+  (alias `hearsay`, passwords in the gitignored `keystore.properties`). A different key
+  would force users to uninstall.
+- Keep "Rambler", "Pixel" and "Gboard" out of names (Google trademarks; "works with
+  Rambler" is fine). Never bundle or link to Pixelboard (a modified Google APK).
 - Comments explain why, in plain sentences; keep the existing style.
