@@ -1,0 +1,38 @@
+# Maintainer: Hassan Aziz <hassanaziz0012 at gmail dot com>
+#
+# The AUR's hearsay-bin: the release's Linux build (the phone app is embedded in it, for
+# `hearsay setup --adb`). scripts/aur.sh bumps pkgver and the checksums for a new release.
+pkgname=hearsay-bin
+pkgver=0.3.0
+pkgrel=1
+pkgdesc="Dictate on the computer with your Android phone's voice typing"
+arch=('x86_64')
+url="https://github.com/hassanaziz0012/hearsay"
+license=('MIT')
+depends=('webkitgtk-6.0' 'gtk4')
+optdepends=(
+	'wl-clipboard: clipboard on Wayland'
+	'ydotool: paste on Wayland (GNOME, KDE)'
+	'wtype: paste on wlroots Wayland compositors'
+	'xclip: clipboard on X11'
+	'xdotool: paste on X11'
+	'libnotify: notifications'
+	'android-tools: setup over USB or wireless debugging'
+)
+provides=('hearsay')
+conflicts=('hearsay')
+options=('!strip' '!debug')
+source=("hearsay-$pkgver.tar.gz::$url/releases/download/v$pkgver/hearsay-linux-amd64.tar.gz"
+	"hearsay-$pkgver.svg::https://raw.githubusercontent.com/hassanaziz0012/hearsay/v$pkgver/cmd/hearsay/icons/app.svg"
+	'hearsay.desktop')
+sha256sums=('37e505b5de6faf0fd7f4d786e47a316539921fcdadc6aa1b41e7095008b761fe'
+            '43efb2ae700cdbc12e63ded864685c941897284d2fe0730aa90503e7698827fe'
+            '1d3c47f4c30bcf54c54400108b86a3e454ac5961920615c0cff4fe3f7f8fa44a')
+
+package() {
+	install -Dm755 hearsay-linux-amd64/hearsay "$pkgdir/usr/bin/hearsay"
+	install -Dm644 hearsay-linux-amd64/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+	install -Dm644 hearsay-linux-amd64/README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+	install -Dm644 "hearsay-$pkgver.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/hearsay.svg"
+	install -Dm644 hearsay.desktop "$pkgdir/usr/share/applications/hearsay.desktop"
+}

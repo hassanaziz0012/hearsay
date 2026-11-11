@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Hearsay
+GenericName=Dictation
+Comment=Dictate on the computer with your Android phone's voice typing
+Exec=hearsay gui
+Icon=hearsay
+Terminal=false
+Categories=Utility;Accessibility;
+Keywords=dictation;voice;speech;typing;
