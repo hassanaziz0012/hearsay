@@ -49,7 +49,7 @@ class HomeActivity : Activity() {
     /** Everything render() shows that can change while the screen is up. */
     private fun state(): List<Any?> = listOf(
         KeyPressService.instance != null, localNetworkAllowed(), wifiAddress(),
-        PhoneServer.port, PhoneServer.advertised, PairedComputers(this).all())
+        PhoneServer.port, PhoneServer.advertised, PairedComputers(this).all(), AppUpdate(this).available)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -131,6 +131,12 @@ class HomeActivity : Activity() {
         content.addView(textView(TextStyle.HEADLINE_MEDIUM_EMPHASIZED, palette.onSurface, "Dictate from your computer"))
         content.addView(textView(TextStyle.BODY_MEDIUM, palette.onSurfaceVariant,
             "Your computer starts Rambler here and gets the text back over Wi-Fi."), spaced(0, 24))
+
+        if (AppUpdate(this).available) {
+            card("Update available",
+                "Your computer has a newer version of this app. Download it, open the file and tap Update.",
+                "Download" to { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(AppUpdate.DOWNLOAD))) })
+        }
 
         val service = KeyPressService.instance
         card("Key presser",

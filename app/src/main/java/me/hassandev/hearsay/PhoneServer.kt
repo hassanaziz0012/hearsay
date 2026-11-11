@@ -68,6 +68,10 @@ import kotlin.concurrent.thread
  * "text":"…"} after a stop or cancel, {"ok":true,"state":"restored"} when an interrupted
  * session was put back instead, {"ok":false,"error":"<code>","msg":"…"} on failure (codes
  * from Session.Failure, plus busy, bad_request). With "debug", a "log" array of timings.
+ *
+ * Every reply also has "app" (this app's versionCode) and "appVersion" (its versionName), and
+ * requests may have "want": the versionCode of the app released with the PC's Hearsay. The
+ * PC tells its user when the app is older than that, and HomeActivity offers the download.
  */
 class PhoneServer(private val service: KeyPressService) {
 
@@ -195,6 +199,7 @@ class PhoneServer(private val service: KeyPressService) {
         // app when it is granted from outside (App info, pm grant): try again now.
         // (Not while a registration is still pending.)
         if (!advertised && registration == null) advertise()
+        AppUpdate(service).noteWanted(req.optLong("want"))
         if (op == "status") return send(out, JSONObject().put("ok", true).put("state", session.phase.name.lowercase()))
         if (op == "keyboards") return send(out, keyboards())
         if (!busy.tryLock()) return send(out, error("busy", "still busy with the last press"))
@@ -297,6 +302,8 @@ class PhoneServer(private val service: KeyPressService) {
     private fun notPaired() = error("not_paired", "this computer isn't paired with the phone. Run `hearsay pair`")
 
     private fun send(out: OutputStream, reply: JSONObject) {
+        val app = AppUpdate(service)
+        reply.put("app", app.installed).put("appVersion", app.installedName)
         out.write((reply.toString() + "\n").toByteArray())
         out.flush()
     }
@@ -409,6 +416,30 @@ class PhoneServer(private val service: KeyPressService) {
         private fun String.unhex(): ByteArray? =
             if (length != 64 || any { it !in "0123456789abcdef" }) null
             else ByteArray(32) { substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+    }
+}
+
+/**
+ * This app's version, and the newest one a paired computer's Hearsay came with: when that
+ * is newer, HomeActivity offers the download.
+ */
+class AppUpdate(context: Context) {
+    private val prefs = context.getSharedPreferences("update", Context.MODE_PRIVATE)
+    private val info = context.packageManager.getPackageInfo(context.packageName, 0)
+
+    val installed: Long = info.longVersionCode
+    val installedName: String = info.versionName.orEmpty()
+
+    /** An update is out: a computer came with a newer version of this app. */
+    val available: Boolean get() = prefs.getLong("want", 0) > installed
+
+    fun noteWanted(want: Long) {
+        if (want > prefs.getLong("want", 0)) prefs.edit().putLong("want", want).apply()
+    }
+
+    companion object {
+        // The newest release's app (the same link as the PC's releaseAPK).
+        const val DOWNLOAD = "https://github.com/hassanaziz0012/hearsay/releases/latest/download/hearsay.apk"
     }
 }
 
