@@ -43,7 +43,7 @@ type tray struct {
 	icon                          *application.SystemTray
 	menu                          *application.Menu
 	label, detail, hotkey, toggle *application.MenuItem
-	cancel                        *application.MenuItem
+	cancel, update, phoneUpdate   *application.MenuItem
 }
 
 func (g *gui) newTray() *tray {
@@ -59,6 +59,9 @@ func (g *gui) newTray() *tray {
 		go g.a.trayAction(func() error { return g.a.stop(false) })
 	})
 	t.menu.AddSeparator()
+	// A new release: opens the window, where its banner has "Update now".
+	t.update = t.menu.Add("").SetHidden(true).OnClick(func(*application.Context) { g.show() })
+	t.phoneUpdate = t.menu.Add("Update the phone app…").SetHidden(true).OnClick(func(*application.Context) { g.show() })
 	t.menu.Add("Open Hearsay").OnClick(func(*application.Context) { g.show() })
 	t.menu.Add("Quit Hearsay").OnClick(func(*application.Context) { g.wails.Quit() })
 	t.icon.SetMenu(t.menu)
@@ -92,6 +95,9 @@ func (t *tray) show(st, msg string) {
 // The item setters update the tray's menu themselves: menu.Update() would rebuild it as a
 // window menu, and on Linux the tray then no longer sees the changes.
 func (t *tray) setHotkey(line string) { t.hotkey.SetLabel(line) }
+
+// setUpdate shows label as the update item, or hides it ("").
+func (t *tray) setUpdate(label string) { t.update.SetLabel(label).SetHidden(label == "") }
 
 func (t *tray) setIcon(name string) {
 	read := func(f string) []byte {

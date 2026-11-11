@@ -205,6 +205,7 @@ func (a *app) unpair() (phoneErr, err error) {
 		return err
 	}()
 	a.cfg.Phone = nil
+	forgetPhoneApp()
 	return phoneErr, saveConfig(a.cfg)
 }
 

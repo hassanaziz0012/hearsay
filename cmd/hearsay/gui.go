@@ -36,6 +36,8 @@ type gui struct {
 	hotkeyPause bool   // unregistered while the window records a new one
 	pairing     *pairing
 	pairCancel  func()
+	update      *release // a newer release than this one, once a check has found it
+	phoneApp    PhoneApp // what the tray last showed about the phone app (phoneapp.go)
 }
 
 // runGUI runs the tray and the hotkey, with the window shown or (show false: `hearsay
@@ -54,6 +56,7 @@ func (a *app) runGUI(show bool) error {
 		}
 	}
 
+	waitForOldTray()
 	assets, _ := fs.Sub(frontend, "frontend")
 	icon, _ := icons.ReadFile("icons/app.png")
 	g.wails = application.New(application.Options{
@@ -114,6 +117,7 @@ func (a *app) runGUI(show bool) error {
 		a.alert(err.Error())
 	}
 	go g.watchStatus()
+	go g.watchUpdates()
 	return g.wails.Run()
 }
 
@@ -143,6 +147,7 @@ func (g *gui) watchStatus() {
 			shown = st + "\t" + msg
 			g.tray.show(st, msg)
 			g.wails.Event.Emit("status", currentStatus())
+			g.checkPhoneApp()
 		}
 		time.Sleep(200 * time.Millisecond)
 	}

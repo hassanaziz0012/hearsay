@@ -6,7 +6,7 @@
 #
 # Steps: signed APK -> check its signing key against the latest release's APK -> embed
 # it in cmd/hearsay/apk -> stripped Linux (cgo) and Windows (no cgo) binaries with the
-# version set -> hearsay-linux-amd64.tar.gz, hearsay-windows-amd64.zip (binary + README +
+# version (and the APK's versionCode) set -> hearsay-linux-amd64.tar.gz, hearsay-windows-amd64.zip (binary + README +
 # LICENSE), hearsay.apk, SHA256SUMS.
 #
 # Before publishing: commit everything, write bin/release-VERSION/notes.md (the release
@@ -39,6 +39,9 @@ echo "== phone app"
 apk=app/build/outputs/apk/release/app-release.apk
 [ -f "$apk" ] || { echo "no $apk" >&2; exit 1; }
 "$bt/aapt2" dump badging "$apk" | head -1 | grep -o "versionCode='[0-9]*' versionName='[^']*'"
+# The computer program knows which phone app it came with, to tell when the phone's is older.
+vc=$("$bt/aapt2" dump badging "$apk" | head -1 | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
+[ -n "$vc" ] || { echo "couldn't read the APK's versionCode" >&2; exit 1; }
 cert() { "$bt/apksigner" verify --print-certs "$1" | sed -n 's/.*SHA-256 digest: //p' | head -1; }
 new=$(cert "$apk")
 tmp=$(mktemp -d)
@@ -55,7 +58,7 @@ cp "$apk" cmd/hearsay/apk/hearsay.apk
 
 echo "== computer builds"
 mkdir -p "$R/hearsay-linux-amd64" "$R/hearsay-windows-amd64"
-ld="-s -w -X main.version=$V"
+ld="-s -w -X main.version=$V -X main.phoneApp=$vc"
 CGO_ENABLED=1 go build -trimpath -ldflags "$ld" -o "$R/hearsay-linux-amd64/hearsay" ./cmd/hearsay
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "$ld" -o "$R/hearsay-windows-amd64/hearsay.exe" ./cmd/hearsay
 for d in "$R/hearsay-linux-amd64" "$R/hearsay-windows-amd64"; do cp README.md LICENSE "$d/"; done

@@ -156,7 +156,7 @@ func (a *app) pingPhone() error {
 		return err
 	}
 	defer conn.Close()
-	r, err := exchange(conn, map[string]string{"op": "status"}, 5*time.Second)
+	r, err := exchange(conn, map[string]any{"op": "status", "want": wantedPhoneApp()}, 5*time.Second)
 	if err != nil {
 		return err
 	}
@@ -203,7 +203,7 @@ func (a *app) phoneKeyboards() ([]phoneKeyboard, error) {
 		return nil, err
 	}
 	defer conn.Close()
-	r, err := exchange(conn, map[string]string{"op": "keyboards"}, 5*time.Second)
+	r, err := exchange(conn, map[string]any{"op": "keyboards", "want": wantedPhoneApp()}, 5*time.Second)
 	switch {
 	case err != nil:
 		return nil, fmt.Errorf("asking the phone for its keyboards: %v", err)

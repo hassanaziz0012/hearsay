@@ -44,12 +44,20 @@ func hidden(cmd *exec.Cmd) *exec.Cmd {
 }
 
 func startDetached(exe string, args ...string) error {
+	if err := startProcess(exe, args...); err != nil {
+		return err
+	}
+	done("started `hearsay run`")
+	return nil
+}
+
+// startProcess starts exe without waiting for it.
+func startProcess(exe string, args ...string) error {
 	cmd := exec.Command(exe, args...)
 	// DETACHED_PROCESS: no console window for the tray.
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000008}
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	done("started `hearsay run`")
 	return cmd.Process.Release()
 }

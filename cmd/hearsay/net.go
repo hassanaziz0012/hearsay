@@ -41,6 +41,11 @@ type phoneReply struct {
 	Nonce string   `json:"nonce"`
 	Log   []string `json:"log"`
 
+	// The phone app's versionCode and versionName (phoneapp.go); 0 and "" from apps
+	// older than v0.4.0.
+	App        int64  `json:"app"`
+	AppVersion string `json:"appVersion"`
+
 	Keyboards []phoneKeyboard `json:"keyboards"`
 }
 
@@ -97,11 +102,13 @@ func (a *app) showReply(r phoneReply, paste bool) error {
 		a.listening()
 	case "restored":
 		// An earlier dictation was cut off (the app restarted); the phone is back as it was.
+		listeningSince()
 		a.status("idle", "Phone restored")
 		a.notify("Phone restored", 2000, false)
 	default:
 		a.logf("got %d chars", len([]rune(r.Text)))
 		a.handOver(r.Text, paste)
+		a.recordDictation(r.Text, paste, a.asked)
 		a.status("idle", "")
 	}
 	return nil
@@ -123,8 +130,9 @@ func (a *app) call(op string, stopping bool) (phoneReply, error) {
 	}
 	defer conn.Close()
 	a.logf("connected to %s", conn.RemoteAddr())
+	a.asked = time.Now()
 	req := map[string]any{"op": op, "ime": a.cfg.Keyboard, "settle": settleMs,
-		"timeout": settleTimeoutMs, "debug": a.debug}
+		"timeout": settleTimeoutMs, "debug": a.debug, "want": wantedPhoneApp()}
 	// A stop waits up to the settle timeout on the phone; a start takes up to ~9 s.
 	r, err := exchange(conn, req, (settleTimeoutMs+12000)*time.Millisecond)
 	for _, l := range r.Log {
@@ -168,7 +176,11 @@ func exchangeOn(conn net.Conn, rd *bufio.Reader, req any, timeout time.Duration)
 	if err != nil {
 		return r, err
 	}
-	return r, json.Unmarshal(line, &r)
+	if err := json.Unmarshal(line, &r); err != nil {
+		return r, err
+	}
+	notePhoneApp(r)
+	return r, nil
 }
 
 // savePhoneAddr records the phone's new address in the config file as it is now, not as
