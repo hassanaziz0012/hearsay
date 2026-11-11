@@ -93,6 +93,12 @@ can turn debugging off again afterwards; dictation doesn't use it.
   window:
   - **Status:** the paired phone and whether it answers, the hotkey and whether it works,
     and the last error.
+  - **Stats:** words dictated today, this week, this month and in all; a chart by day or
+    month and a year at a glance; the hours and weekdays you dictate most; how fast you
+    talk, and the time saved over typing (a short typing test measures your own typing
+    speed to compare with); streaks and records. Only numbers are kept (when, how many
+    words, how long), never what you said, and only on your computer, in `stats.jsonl`
+    next to `config.json`. **Reset stats** deletes them.
   - **Settings:** record a new hotkey, paste or only copy, start at login. Changes apply
     right away.
   - **Troubleshoot:** test the connection, pair again, forget the phone, open the log,
