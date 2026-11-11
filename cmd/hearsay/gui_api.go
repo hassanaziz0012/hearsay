@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -33,6 +34,7 @@ type State struct {
 	HotkeyLine       string     `json:"hotkeyLine"`
 	HotkeyError      string     `json:"hotkeyError"`
 	Paste            bool       `json:"paste"`
+	StatsOn          bool       `json:"statsOn"`        // dictations are counted for the Stats page
 	PasteForcedOff   bool       `json:"pasteForcedOff"` // HEARSAY_PASTE=0
 	Autostart        bool       `json:"autostart"`
 	AutostartOther   bool       `json:"autostartOther"` // another hearsay starts at login
@@ -42,6 +44,18 @@ type State struct {
 	ReleaseURL       string     `json:"releaseUrl"`
 	ToggleCommand    string     `json:"toggleCommand"` // for a desktop shortcut
 	Version          string     `json:"version"`
+	ReleaseBuild     bool       `json:"releaseBuild"` // has a version to check for updates
+	UpdatesOn        bool       `json:"updatesOn"`
+	Update           *Update    `json:"update"`   // a newer release, nil if none found
+	PhoneApp         *PhoneApp  `json:"phoneApp"` // the phone app's version, once it has said
+}
+
+// Update is a newer release than this one.
+type Update struct {
+	Version    string `json:"version"`
+	Page       string `json:"page"`       // the release's page, with what's new
+	CanInstall bool   `json:"canInstall"` // there's a build for this system to install
+	Managed    bool   `json:"managed"`    // the package manager installed this one
 }
 
 type PhoneInfo struct {
@@ -87,6 +101,7 @@ func (api *API) State() State {
 		Hotkey:           spec,
 		HotkeyLine:       g.hotkeyLine,
 		Paste:            a.paste,
+		StatsOn:          a.cfg.statsOn(),
 		PasteForcedOff:   os.Getenv("HEARSAY_PASTE") == "0",
 		Autostart:        on,
 		AutostartOther:   other,
@@ -96,6 +111,12 @@ func (api *API) State() State {
 		ReleaseURL:       releaseAPK,
 		ToggleCommand:    quoteArg(exe) + " toggle",
 		Version:          version,
+		ReleaseBuild:     releaseBuild(),
+		UpdatesOn:        a.cfg.updatesOn(),
+	}
+	s.PhoneApp = phoneAppState()
+	if u := g.update; u != nil {
+		s.Update = &Update{u.Version, u.Page, u.archive != "", packageManaged()}
 	}
 	if g.hotkeyErr != nil {
 		s.HotkeyError = g.hotkeyErr.Error()
@@ -445,6 +466,96 @@ func (api *API) SetAutostart(on bool) error {
 	return nil
 }
 
+// Updates
+
+// CheckUpdate asks GitHub for the latest release now, and says what it found.
+func (api *API) CheckUpdate() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	rel, err := api.g.checkUpdate(ctx, false)
+	if err != nil {
+		if releaseBuild() {
+			fmt.Fprintln(api.g.a.log, "hearsay: update check:", err)
+			return "", errors.New("couldn't reach GitHub to check for updates. Try again later")
+		}
+		return "", err
+	}
+	if newer(rel.Version, version) {
+		return "Hearsay " + rel.Version + " is out.", nil
+	}
+	return "Hearsay " + version + " is the latest version.", nil
+}
+
+// InstallUpdate downloads the new release, puts it in place of this program and restarts.
+func (api *API) InstallUpdate() error { return api.g.installUpdate() }
+
+// SetUpdates turns the daily check for new releases on or off.
+func (api *API) SetUpdates(on bool) error {
+	if !on {
+		api.g.setUpdate(nil)
+	}
+	return api.g.updateConfig(func(c *config) { c.Updates = &on })
+}
+
+// Stats
+
+// Stats returns the numbers for the Stats page.
+func (api *API) Stats() (Stats, error) {
+	recs, err := loadStats()
+	if err != nil {
+		return Stats{}, err
+	}
+	a := api.g.a
+	a.mu.Lock()
+	wpm := a.cfg.TypingWPM
+	a.mu.Unlock()
+	return summarize(recs, time.Now(), wpm), nil
+}
+
+// SetTypingSpeed saves the result of the typing test.
+func (api *API) SetTypingSpeed(wpm int) error {
+	if wpm < 5 || wpm > 300 {
+		return errors.New("that typing speed doesn't look right. Try the test again")
+	}
+	return api.g.updateConfig(func(c *config) { c.TypingWPM = wpm })
+}
+
+// SetStats turns counting dictations on or off. What was counted so far stays.
+func (api *API) SetStats(on bool) error {
+	return api.g.updateConfig(func(c *config) { c.Stats = &on })
+}
+
+// ExportStats saves every recorded dictation as a CSV file the user picks, and returns
+// its path ("" if they changed their mind).
+func (api *API) ExportStats() (string, error) {
+	recs, err := loadStats()
+	if err != nil {
+		return "", err
+	}
+	if len(recs) == 0 {
+		return "", errors.New("there are no stats to export yet")
+	}
+	home, _ := os.UserHomeDir()
+	p, err := api.g.wails.Dialog.SaveFile().
+		SetMessage("Export your dictation stats").
+		SetDirectory(home).
+		SetFilename("hearsay-stats.csv").
+		AttachToWindow(api.g.win).
+		PromptForSingleSelection()
+	if err != nil || p == "" {
+		return "", err
+	}
+	return p, os.WriteFile(p, []byte(statsCSV(recs, time.Local)), 0o644)
+}
+
+// ResetStats deletes every recorded dictation.
+func (api *API) ResetStats() error {
+	if err := os.Remove(statsPath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // Troubleshoot
 
 // Forget unpairs. The message says if the phone couldn't be told.
@@ -494,6 +605,12 @@ func (api *API) report() string {
 	var b strings.Builder
 	line := func(k string, v any) { fmt.Fprintf(&b, "%-18s %v\n", k+":", v) }
 	line("hearsay", s.Version)
+	if s.Update != nil {
+		line("latest release", s.Update.Version)
+	}
+	if p := s.PhoneApp; p != nil {
+		line("phone app", fmt.Sprintf("%q outdated=%v newer=%v", p.Version, p.Outdated, p.Newer))
+	}
 	line("system", runtime.GOOS+"/"+runtime.GOARCH)
 	line("desktop", os.Getenv("XDG_CURRENT_DESKTOP")+" wayland="+fmt.Sprint(s.Wayland))
 	if s.Phone != nil {

@@ -362,3 +362,145 @@ func TestWifiIP(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordDictation(t *testing.T) {
+	useConfigDir(t, t.TempDir())
+	t.Setenv("HEARSAY_RUN_DIR", t.TempDir())
+	a := &app{log: os.Stderr}
+	stopped := time.Now()
+
+	// A cancel while nothing was listening isn't a dictation.
+	a.recordDictation("", false, stopped)
+	// Text counts even when the start time was lost (a logout cleared the run dir).
+	a.recordDictation("no start time", true, stopped)
+	os.WriteFile(runFile("since"), []byte(fmt.Sprint(stopped.Add(-30*time.Second).UnixMilli())), 0o600)
+	a.recordDictation("one two  three\nfour", true, stopped)
+	markListening()
+	a.recordDictation("thrown away", false, time.Now())
+	markListening()
+	a.recordDictation("  ", true, time.Now())
+	// The setup wizard's test dictation is left out, and uses up the start time.
+	markListening()
+	a.noStats = true
+	a.recordDictation("a test", true, time.Now())
+	a.noStats = false
+	if _, err := os.Stat(runFile("since")); err == nil {
+		t.Error("the start time outlived its dictation")
+	}
+
+	recs, err := loadStats()
+	if err != nil || len(recs) != 4 {
+		t.Fatalf("%d records, %v", len(recs), err)
+	}
+	if r := recs[0]; r.W != 3 || r.Ms != 0 || r.R != "ok" {
+		t.Errorf("without start time: %+v", r)
+	}
+	if r := recs[1]; r.W != 4 || r.C != 19 || r.Ms != 30000 || r.R != "ok" {
+		t.Errorf("dictation: %+v", r)
+	}
+	if recs[2].R != "cancelled" || recs[2].W != 0 || recs[3].R != "empty" {
+		t.Errorf("cancelled %+v, empty %+v", recs[2], recs[3])
+	}
+	b, _ := os.ReadFile(statsPath())
+	if strings.Contains(string(b), "three") || strings.Contains(string(b), "thrown") {
+		t.Errorf("dictated text in the stats file: %s", b)
+	}
+}
+
+func TestSummarize(t *testing.T) {
+	loc := time.FixedZone("test", 5*3600)
+	// A Wednesday.
+	now := time.Date(2026, 11, 11, 15, 0, 0, 0, loc)
+	at := func(daysAgo, hour int) int64 {
+		return time.Date(2026, 11, 11-daysAgo, hour, 30, 0, 0, loc).Unix()
+	}
+	recs := []statRecord{
+		{T: at(0, 9), W: 100, Ms: 60000, R: "ok"},
+		{T: at(0, 14), W: 50, R: "ok"}, // length unknown: no part in pace or time saved
+		{T: at(0, 14), R: "cancelled"},
+		{T: at(1, 23), W: 20, Ms: 30000, R: "ok"},
+		{T: at(2, 9), W: 30, Ms: 30000, R: "ok"}, // Monday
+		{T: at(3, 9), W: 500, Ms: 300000, R: "ok"},
+		{T: at(5, 9), W: 10, R: "ok"},
+		{T: at(6, 9), W: 10, R: "ok"},
+		{T: at(7, 9), W: 10, R: "ok"},
+		{T: at(8, 9), W: 10, R: "ok"},
+		{T: at(8, 10), R: "empty"},
+		{T: at(40, 9), W: 7, R: "ok"},
+	}
+	s := summarize(recs, now, 0)
+	if s.Today != (Span{150, 2}) || s.Week != (Span{200, 4}) || s.Month != (Span{740, 9}) || s.Total != (Span{747, 10}) {
+		t.Errorf("today %v, week %v, month %v, total %v", s.Today, s.Week, s.Month, s.Total)
+	}
+	if s.Streak != 4 || s.LongestStreak != 4 {
+		t.Errorf("streak %d, longest %d", s.Streak, s.LongestStreak)
+	}
+	if s.BestDay == nil || s.BestDay.Date != "2026-11-08" || s.BestDay.Words != 500 || s.LongestWords != 500 || s.LongestDate != "2026-11-08" {
+		t.Errorf("best day %+v, longest %d on %s", s.BestDay, s.LongestWords, s.LongestDate)
+	}
+	// 650 words in 7 minutes; typing them at 40 a minute would take 16m15s.
+	if s.SpeakMs != 420000 || s.PaceWPM != 93 || s.TypingWPM != 40 || s.TypingMeasured || s.SavedMs != 555000 {
+		t.Errorf("speak %d, pace %d, typing %d (measured %v), saved %d", s.SpeakMs, s.PaceWPM, s.TypingWPM, s.TypingMeasured, s.SavedMs)
+	}
+	if s.ByHour[9] != 677 || s.ByHour[14] != 50 || s.ByHour[23] != 20 {
+		t.Errorf("by hour %v", s.ByHour)
+	}
+	// Monday first: 9 Nov is a Monday, 8 Nov a Sunday, 4 and 11 Nov Wednesdays.
+	if s.ByWeekday[0] != 30 || s.ByWeekday[6] != 500 || s.ByWeekday[2] != 160 {
+		t.Errorf("by weekday %v", s.ByWeekday)
+	}
+	if s.Cancelled != 1 || s.Empty != 1 || s.Since != "2026-10-02" {
+		t.Errorf("cancelled %d, empty %d, since %s", s.Cancelled, s.Empty, s.Since)
+	}
+	if n := len(s.Days); n != 53*7+3 || s.Days[0].Date != "2025-11-03" || s.Days[n-1] != (DayStat{"2026-11-11", 150, 2}) {
+		t.Errorf("%d days, from %s to %+v", n, s.Days[0].Date, s.Days[n-1])
+	}
+
+	// A faster typist saves less; one faster than they talk saves nothing.
+	if s := summarize(recs, now, 65); !s.TypingMeasured || s.SavedMs != 180000 {
+		t.Errorf("at 65 wpm: saved %d", s.SavedMs)
+	}
+	if s := summarize(recs, now, 200); s.SavedMs != 0 {
+		t.Errorf("at 200 wpm: saved %d", s.SavedMs)
+	}
+	// Nothing today yet: yesterday's streak is still alive. A day later it's gone.
+	if s := summarize(recs[3:], now, 0); s.Streak != 3 {
+		t.Errorf("streak without today: %d", s.Streak)
+	}
+	if s := summarize(recs[4:], now, 0); s.Streak != 0 || s.LongestStreak != 4 {
+		t.Errorf("broken streak: %d, longest %d", s.Streak, s.LongestStreak)
+	}
+	if s := summarize(nil, now, 0); s.BestDay != nil || s.Total.Words != 0 || len(s.Days) == 0 || s.Since != "" {
+		t.Errorf("no records: %+v", s)
+	}
+}
+
+func TestStatsOffAndExport(t *testing.T) {
+	useConfigDir(t, t.TempDir())
+	t.Setenv("HEARSAY_RUN_DIR", t.TempDir())
+	off := false
+	a := &app{log: os.Stderr, cfg: config{Stats: &off}}
+	markListening()
+	a.recordDictation("not counted", true, time.Now())
+	if recs, _ := loadStats(); len(recs) != 0 {
+		t.Fatalf("counted with stats off: %+v", recs)
+	}
+	if _, err := os.Stat(runFile("since")); err == nil {
+		t.Error("the start time outlived its dictation")
+	}
+
+	loc := time.FixedZone("test", 5*3600)
+	at := time.Date(2026, 11, 11, 9, 30, 0, 0, loc).Unix()
+	got := statsCSV([]statRecord{
+		{T: at, W: 12, C: 64, Ms: 5449, R: "ok"},
+		{T: at + 60, R: "cancelled", Ms: 2000},
+		{T: at + 120, W: 3, C: 15, R: "o,k\"\n"},
+	}, loc)
+	want := "time,words,characters,seconds,outcome\n" +
+		"2026-11-11 09:30:00,12,64,5.4,ok\n" +
+		"2026-11-11 09:31:00,0,0,2.0,cancelled\n" +
+		"2026-11-11 09:32:00,3,15,,ok\n"
+	if got != want {
+		t.Errorf("got:\n%s", got)
+	}
+}

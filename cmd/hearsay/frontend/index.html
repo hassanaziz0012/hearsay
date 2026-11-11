@@ -10,13 +10,14 @@
 <body>
   <div class="titlebar-space"></div>
 
-  <!-- Main app: sidebar and three pages -->
+  <!-- Main app: sidebar and four pages -->
   <div id="main" class="shell" hidden>
     <nav class="side">
       <div class="brand">
         <span class="wordmark">Hearsay</span>
       </div>
       <button class="nav" data-page="status" aria-current="page">Status</button>
+      <button class="nav" data-page="stats">Stats</button>
       <button class="nav" data-page="settings">Settings</button>
       <button class="nav" data-page="help">Troubleshoot</button>
       <p class="side-foot" id="version"></p>
@@ -39,6 +40,22 @@
           </div>
         </div>
 
+        <div class="notice update" id="st-update" hidden>
+          <span><strong id="st-update-title"></strong> <span id="st-update-text"></span></span>
+          <span class="notice-actions">
+            <button class="link" id="st-update-notes">What's new</button>
+            <button class="btn primary" id="st-update-install">Update now</button>
+          </span>
+          <p class="field-msg" id="st-update-msg" role="status"></p>
+        </div>
+        <div class="notice phone-update" id="st-phoneapp" hidden>
+          <div>
+            <strong id="st-phoneapp-title"></strong>
+            <p id="st-phoneapp-text"></p>
+            <button class="link" id="st-phoneapp-link">Open the download link here</button>
+          </div>
+          <figure class="qr small" id="st-phoneapp-qr" aria-label="QR code with the phone app's download link"></figure>
+        </div>
         <div class="notice warn" id="st-error" hidden>
           <strong>Last press didn't work.</strong>
           <span id="st-error-text"></span>
@@ -72,6 +89,118 @@
             <dd id="st-paste"></dd>
           </div>
         </dl>
+      </section>
+
+      <!-- Stats -->
+      <section class="page" id="page-stats" hidden>
+        <h2>Stats</h2>
+
+        <div class="notice" id="stats-empty" hidden>
+          <span id="stats-empty-text"></span>
+        </div>
+        <div class="notice" id="stats-off" hidden>
+          <span>Stats are off: new dictations aren't being counted.</span>
+        </div>
+        <p class="field-msg" id="stats-error" data-tone="bad" role="status"></p>
+
+        <div id="stats-body" hidden>
+          <dl class="tiles">
+            <div><dt>Today</dt><dd class="big" id="stats-today"></dd><dd class="dim" id="stats-today-n"></dd></div>
+            <div><dt>This week</dt><dd class="big" id="stats-week"></dd><dd class="dim" id="stats-week-n"></dd><dd class="dim" id="stats-week-cmp"></dd></div>
+            <div><dt>This month</dt><dd class="big" id="stats-month"></dd><dd class="dim" id="stats-month-n"></dd></div>
+            <div><dt>All time</dt><dd class="big" id="stats-total"></dd><dd class="dim" id="stats-total-n"></dd></div>
+          </dl>
+
+          <div class="chart">
+            <div class="chart-head">
+              <h3>Words dictated</h3>
+              <div class="seg" id="stats-range" role="group" aria-label="Period">
+                <button data-range="week" aria-pressed="true">Week</button>
+                <button data-range="month" aria-pressed="false">Month</button>
+                <button data-range="year" aria-pressed="false">Year</button>
+              </div>
+            </div>
+            <p class="readout" id="stats-words-read"></p>
+            <div class="bars" id="stats-words"></div>
+          </div>
+
+          <div class="chart">
+            <div class="chart-head">
+              <h3>The last year, day by day</h3>
+              <div class="heat-key" aria-hidden="true">Less <i></i><i data-l="1"></i><i data-l="2"></i><i data-l="3"></i><i data-l="4"></i> More</div>
+            </div>
+            <p class="readout" id="stats-heat-read"></p>
+            <div class="heat-months" id="stats-heat-months" aria-hidden="true"></div>
+            <div class="heat" id="stats-heat"></div>
+          </div>
+
+          <div class="chart-pair">
+            <div class="chart">
+              <h3>By hour of the day</h3>
+              <p class="readout" id="stats-hours-read"></p>
+              <div class="bars short" id="stats-hours"></div>
+            </div>
+            <div class="chart">
+              <h3>By weekday</h3>
+              <p class="readout" id="stats-weekdays-read"></p>
+              <div class="bars short" id="stats-weekdays"></div>
+            </div>
+          </div>
+
+          <h3 class="stats-h">Pace and time saved</h3>
+          <dl class="tiles two">
+            <div><dt>You talk at</dt><dd class="big" id="stats-pace"></dd><dd class="dim">words a minute</dd></div>
+            <div>
+              <dt>You type at</dt><dd class="big" id="stats-typing"></dd>
+              <dd class="dim"><span id="stats-typing-note"></span> <button class="link" id="stats-typing-open">Measure it</button></dd>
+            </div>
+            <div><dt>Time spent talking</dt><dd class="big" id="stats-spoke"></dd><dd class="dim" id="stats-spoke-note"></dd></div>
+            <div><dt>Saved over typing</dt><dd class="big" id="stats-saved"></dd><dd class="dim" id="stats-saved-note"></dd></div>
+          </dl>
+
+          <div class="typing" id="typing" hidden>
+            <h3>Typing test</h3>
+            <p class="dim" id="typing-help"></p>
+            <div class="typing-text" id="typing-text" tabindex="0" role="textbox" aria-label="Type this text" aria-describedby="typing-help"></div>
+            <div class="typing-foot">
+              <p id="typing-result" role="status"></p>
+              <button class="btn quiet" id="typing-close">Close</button>
+              <button class="btn" id="typing-again">Another text</button>
+              <button class="btn primary" id="typing-save" hidden>Use this speed</button>
+            </div>
+          </div>
+
+          <h3 class="stats-h">Streaks and records</h3>
+          <dl class="records" id="stats-records"></dl>
+
+        </div>
+
+        <div class="stats-tools">
+          <div class="tool">
+            <div>
+              <h3>Keep stats</h3>
+              <p>Counts each dictation, on this computer only and as numbers: never what you said. Off: nothing new is counted, and what's here stays.</p>
+              <p class="field-msg" id="stats-on-msg" role="status"></p>
+            </div>
+            <label class="switch"><input type="checkbox" id="stats-on" aria-label="Keep stats"><span></span></label>
+          </div>
+          <div class="tool" id="stats-export-row">
+            <div>
+              <h3>Export</h3>
+              <p>Saves every dictation's numbers (time, words, characters, seconds, outcome) as a CSV file for a spreadsheet.</p>
+              <p class="field-msg" id="stats-export-msg" role="status"></p>
+            </div>
+            <button class="btn" id="stats-export">Export stats</button>
+          </div>
+          <div class="tool" id="stats-reset-row">
+            <div>
+              <h3>Start over</h3>
+              <p>Deletes every stat. <span id="stats-since"></span></p>
+              <p class="field-msg" id="stats-reset-msg" role="status"></p>
+            </div>
+            <button class="btn danger" id="stats-reset">Reset stats</button>
+          </div>
+        </div>
       </section>
 
       <!-- Settings -->
@@ -110,6 +239,18 @@
             <label class="switch"><input type="checkbox" id="set-login"><span></span></label>
           </div>
           <p class="field-msg" id="set-login-msg" role="status"></p>
+        </div>
+
+        <div class="setting">
+          <div class="setting-text">
+            <h3>Check for updates</h3>
+            <p id="set-updates-help">Asks GitHub once a day whether a new version is out. Nothing about you or what you dictate is sent.</p>
+          </div>
+          <div class="setting-control">
+            <button class="link" id="set-updates-now">Check now</button>
+            <label class="switch"><input type="checkbox" id="set-updates" aria-describedby="set-updates-help"><span></span></label>
+          </div>
+          <p class="field-msg" id="set-updates-msg" role="status"></p>
         </div>
       </section>
 

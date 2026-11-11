@@ -58,7 +58,9 @@ async function refresh() {
   for (const el of document.querySelectorAll(".trayname")) {
     el.textContent = state.os === "darwin" ? "menu bar icon" : "tray icon";
   }
-  $("version").textContent = "Version " + state.version;
+  $("version").textContent = "Version " + state.version + (state.update ? " · update available" : "");
+  renderUpdate();
+  renderPhoneApp();
   renderStatus(state.status);
   renderFacts();
   renderSettings();
@@ -100,6 +102,57 @@ function renderStatus(st) {
   $("st-error-text").textContent = st.lastError;
 }
 
+function renderUpdate() {
+  const u = state.update;
+  $("st-update").hidden = !u;
+  if (!u) return;
+  $("st-update-title").textContent = "Hearsay " + u.version + " is out.";
+  $("st-update-text").textContent = u.canInstall
+    ? "You have " + state.version + ". Updating takes a few seconds and restarts Hearsay."
+    : u.managed
+    ? "You have " + state.version + ". Update it with your package manager."
+    : "You have " + state.version + ". Download the new version from the release page.";
+  $("st-update-install").hidden = !u.canInstall;
+  $("st-update-notes").textContent = u.canInstall ? "What's new" : "Open the release page";
+}
+
+$("st-update-notes").onclick = () => Browser.OpenURL(state.update.page);
+$("st-update-install").onclick = (e) => busy(e.currentTarget, async () => {
+  const msg = $("st-update-msg");
+  say(msg, "Downloading…");
+  try {
+    await api("InstallUpdate");
+    say(msg, "Updated. Restarting…", "ok");
+  } catch (err) {
+    say(msg, errText(err), "bad");
+  }
+});
+
+// The phone app is older (or newer) than the one released with this program.
+let phoneQrDrawn = false;
+async function renderPhoneApp() {
+  const p = state.phoneApp;
+  const box = $("st-phoneapp");
+  box.hidden = !p || !(p.outdated || p.newer);
+  if (box.hidden) return;
+  const have = p.version ? " (it has " + p.version + ")" : "";
+  if (p.outdated) {
+    $("st-phoneapp-title").textContent = "Update the Hearsay app on your phone" + have + ".";
+    $("st-phoneapp-text").textContent = "Open Hearsay on the phone and tap Download, or scan this code with the phone. Then open the downloaded file and tap Update.";
+  } else {
+    $("st-phoneapp-title").textContent = "The phone app is newer than Hearsay on this computer.";
+    $("st-phoneapp-text").textContent = "Update Hearsay here: Settings, Check for updates.";
+  }
+  $("st-phoneapp-link").hidden = !p.outdated;
+  $("st-phoneapp-qr").hidden = !p.outdated;
+  if (p.outdated && !phoneQrDrawn) {
+    const q = await api("InstallQR");
+    $("st-phoneapp-qr").innerHTML = `<svg viewBox="0 0 ${q.size} ${q.size}" shape-rendering="crispEdges"><path fill="#050f16" d="${q.path}"/></svg>`;
+    phoneQrDrawn = true;
+  }
+}
+$("st-phoneapp-link").onclick = () => Browser.OpenURL(state.releaseUrl);
+
 function renderFacts() {
   const s = state;
   $("st-phone").textContent = s.phone ? s.phone.name.replace(/^Hearsay on /, "") : "No phone paired";
@@ -129,6 +182,7 @@ function showPage(name) {
   }
   for (const p of document.querySelectorAll(".page")) p.hidden = p.id !== "page-" + name;
   if (name !== "settings") stopRecording();
+  if (name === "stats") loadStats(); else closeTyping();
 }
 for (const b of document.querySelectorAll(".nav")) b.onclick = () => showPage(b.dataset.page);
 
@@ -161,6 +215,354 @@ async function checkConnection() {
 }
 $("st-check").onclick = checkConnection;
 
+// ---------- stats ----------
+
+let stats = null;
+let range = "week";
+const num = (n) => n.toLocaleString();
+const plural = (n, one, many) => `${num(n)} ${n === 1 ? one : many || one + "s"}`;
+const dayOf = (date) => new Date(date + "T12:00:00");
+const dayText = (date, opts) => dayOf(date).toLocaleDateString(undefined, opts || { weekday: "short", day: "numeric", month: "short" });
+const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+function duration(ms) {
+  const min = Math.round(ms / 60000);
+  if (ms <= 0) return "0 min";
+  if (min < 1) return "< 1 min";
+  if (min < 60) return min + " min";
+  return `${Math.floor(min / 60)} h ${min % 60} min`;
+}
+
+function hourText(h) {
+  return new Date(2000, 0, 1, h).toLocaleTimeString(undefined, { hour: "numeric" });
+}
+
+async function loadStats() {
+  try {
+    stats = await api("Stats");
+    say($("stats-error"), "");
+  } catch (e) {
+    say($("stats-error"), errText(e), "bad");
+    return;
+  }
+  renderStats();
+}
+
+// bars draws one column per item ({value, label, tip}); the line above it says what the
+// pointer is on, and says rest otherwise.
+function bars(el, readout, items, rest) {
+  const max = Math.max(1, ...items.map((it) => it.value));
+  el.textContent = "";
+  readout.textContent = rest;
+  for (const it of items) {
+    const col = document.createElement("div");
+    col.className = "bar";
+    col.tabIndex = 0;
+    col.setAttribute("aria-label", it.tip);
+    const mark = document.createElement("i");
+    mark.style.height = (it.value / max) * 100 + "%";
+    if (!it.value) mark.className = "none";
+    const label = document.createElement("span");
+    label.textContent = it.label || "";
+    col.append(mark, label);
+    col.onpointerenter = col.onfocus = () => { readout.textContent = it.tip; };
+    col.onpointerleave = col.onblur = () => { readout.textContent = rest; };
+    el.append(col);
+  }
+}
+
+function renderWords() {
+  const days = stats.days;
+  const tip = (d) => `${dayText(d.date)}: ${plural(d.words, "word")} in ${plural(d.dictations, "dictation")}`;
+  let items, rest;
+  if (range === "year") {
+    const months = new Map();
+    for (const d of days) {
+      const key = d.date.slice(0, 7);
+      const m = months.get(key) || { date: d.date, words: 0, dictations: 0 };
+      m.words += d.words;
+      m.dictations += d.dictations;
+      months.set(key, m);
+    }
+    const last = [...months.values()].slice(-12);
+    items = last.map((m) => ({
+      value: m.words,
+      label: dayText(m.date, { month: "short" }),
+      tip: `${dayText(m.date, { month: "long", year: "numeric" })}: ${plural(m.words, "word")} in ${plural(m.dictations, "dictation")}`,
+    }));
+    const total = last.reduce((n, m) => n + m.words, 0);
+    rest = `${plural(total, "word")} in the last 12 months, ${num(Math.round(total / 12))} a month on average`;
+  } else {
+    const n = range === "week" ? 7 : 30;
+    const last = days.slice(-n);
+    items = last.map((d) => ({
+      value: d.words,
+      label: n === 7 ? dayText(d.date, { weekday: "short" })
+        : dayOf(d.date).getDay() === 1 ? dayText(d.date, { day: "numeric", month: "short" }) : "",
+      tip: tip(d),
+    }));
+    const total = last.reduce((sum, d) => sum + d.words, 0);
+    rest = `${plural(total, "word")} in the last ${n} days, ${num(Math.round(total / n))} a day on average`;
+  }
+  bars($("stats-words"), $("stats-words-read"), items, rest);
+}
+
+// The year as a grid: a column per week (Monday on top), a square per day, darker for
+// more words.
+function renderHeat() {
+  const days = stats.days;
+  const max = Math.max(1, ...days.map((d) => d.words));
+  const active = days.filter((d) => d.dictations > 0).length;
+  const rest = `You dictated on ${plural(active, "day")} of the last ${num(days.length)}`;
+  const readout = $("stats-heat-read");
+  readout.textContent = rest;
+  const heat = $("stats-heat");
+  heat.textContent = "";
+  const months = $("stats-heat-months");
+  months.textContent = "";
+  const weeks = Math.ceil(days.length / 7);
+  months.style.gridTemplateColumns = `repeat(${weeks}, 1fr)`;
+  let lastLabel = -4;
+  days.forEach((d, i) => {
+    const cell = document.createElement("i");
+    if (d.words) cell.dataset.l = Math.max(1, Math.ceil((4 * d.words) / max));
+    const tip = `${dayText(d.date, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}: `
+      + (d.dictations ? `${plural(d.words, "word")} in ${plural(d.dictations, "dictation")}` : "nothing");
+    cell.setAttribute("aria-label", tip);
+    cell.onpointerenter = () => { readout.textContent = tip; };
+    cell.onpointerleave = () => { readout.textContent = rest; };
+    heat.append(cell);
+    // Name a month over the week its first day falls in, unless that crowds the last name.
+    const week = Math.floor(i / 7);
+    if (d.date.endsWith("-01") && week - lastLabel >= 3) {
+      const m = document.createElement("span");
+      m.textContent = dayText(d.date, { month: "short" });
+      m.style.gridColumn = week + 1;
+      months.append(m);
+      lastLabel = week;
+    }
+  });
+}
+
+function renderStats() {
+  const s = stats;
+  const none = s.total.dictations === 0;
+  $("stats-empty").hidden = !none;
+  $("stats-empty-text").textContent = state.statsOn
+    ? "Nothing to show yet. Your next dictation starts the count. Hearsay keeps numbers only (when, how many words, how long), never what you said."
+    : "Nothing to show: stats are off. Turn on Keep stats below to count your dictations.";
+  $("stats-off").hidden = state.statsOn || none;
+  $("stats-on").checked = state.statsOn;
+  $("stats-body").hidden = none;
+  // Cancelled and empty dictations are records too, so there may be some to export or delete.
+  $("stats-export-row").hidden = $("stats-reset-row").hidden = !s.since;
+  $("stats-since").textContent = s.since ? `Counting since ${dayText(s.since, { day: "numeric", month: "long", year: "numeric" })}.` : "";
+  if (none) return;
+
+  for (const k of ["today", "week", "month", "total"]) {
+    $("stats-" + k).textContent = num(s[k].words);
+    $("stats-" + k + "-n").textContent = `${s[k].words === 1 ? "word" : "words"} in ${plural(s[k].dictations, "dictation")}`;
+  }
+  // This week against last week up to the same weekday (the days start on a Monday).
+  const sofar = s.days.length % 7 || 7;
+  const before = s.days.slice(-sofar - 7, -7).reduce((n, d) => n + d.words, 0);
+  const change = before ? Math.round(((s.week.words - before) / before) * 100) : 0;
+  $("stats-week-cmp").textContent = !before ? (s.week.words ? "nothing by this day last week" : "")
+    : change === 0 ? "level with last week by this day"
+    : `${change > 0 ? "▲" : "▼"} ${num(Math.abs(change))}% on last week by this day (${num(before)})`;
+  renderWords();
+  renderHeat();
+
+  const topHour = s.byHour.indexOf(Math.max(...s.byHour));
+  bars($("stats-hours"), $("stats-hours-read"), s.byHour.map((w, h) => ({
+    value: w,
+    label: h % 6 === 0 ? hourText(h) : "",
+    tip: `${hourText(h)} to ${hourText((h + 1) % 24)}: ${plural(w, "word")}`,
+  })), `Most words around ${hourText(topHour)}`);
+  const topDay = s.byWeekday.indexOf(Math.max(...s.byWeekday));
+  bars($("stats-weekdays"), $("stats-weekdays-read"), s.byWeekday.map((w, i) => ({
+    value: w,
+    label: weekdays[i].slice(0, 2),
+    tip: `${weekdays[i]}s: ${plural(w, "word")}`,
+  })), `Most words on ${weekdays[topDay]}s`);
+
+  const timed = s.speakMs > 0;
+  $("stats-pace").textContent = timed ? num(s.paceWpm) : "–";
+  $("stats-typing").textContent = num(s.typingWpm);
+  $("stats-typing-note").textContent = s.typingMeasured ? "words a minute." : "words a minute is a guess.";
+  $("stats-typing-open").textContent = s.typingMeasured ? "Measure again" : "Measure yours";
+  $("stats-spoke").textContent = timed ? duration(s.speakMs) : "–";
+  $("stats-spoke-note").textContent = timed ? "from start to stop" : "counted from your next dictation";
+  $("stats-saved").textContent = timed ? duration(s.savedMs) : "–";
+  $("stats-saved-note").textContent = !timed ? ""
+    : s.savedMs > 0 ? `against typing at ${s.typingWpm} words a minute`
+    : "you type at least as fast as you talk";
+
+  const rec = $("stats-records");
+  rec.textContent = "";
+  const row = (name, value, note) => {
+    const div = document.createElement("div");
+    const dt = document.createElement("dt");
+    dt.textContent = name;
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    if (note) {
+      const small = document.createElement("span");
+      small.textContent = note;
+      dd.append(" ", small);
+    }
+    div.append(dt, dd);
+    rec.append(div);
+  };
+  row("Current streak", plural(s.streak, "day"), s.streak > 0 && s.today.dictations === 0 ? "dictate today to keep it" : "");
+  row("Longest streak", plural(s.longestStreak, "day"));
+  if (s.bestDay) row("Best day", plural(s.bestDay.words, "word"), dayText(s.bestDay.date, { day: "numeric", month: "short", year: "numeric" }));
+  row("Longest dictation", plural(s.longestWords, "word"), dayText(s.longestDate, { day: "numeric", month: "short", year: "numeric" }));
+  row("Average dictation", plural(Math.round(s.total.words / s.total.dictations), "word"));
+  const activeDays = s.days.filter((d) => d.dictations > 0).length;
+  if (activeDays) row("On a day you dictate", plural(Math.round(s.days.reduce((n, d) => n + d.words, 0) / activeDays), "word"), "average over the last year");
+  row("Cancelled", plural(s.cancelled, "dictation"));
+  row("Nothing heard", plural(s.empty, "time"));
+}
+
+for (const b of document.querySelectorAll("#stats-range button")) {
+  b.onclick = () => {
+    range = b.dataset.range;
+    for (const o of document.querySelectorAll("#stats-range button")) o.setAttribute("aria-pressed", String(o === b));
+    renderWords();
+  };
+}
+
+$("stats-on").onchange = async (e) => {
+  try {
+    await api("SetStats", e.target.checked);
+    await refresh();
+    say($("stats-on-msg"), "");
+  } catch (err) {
+    e.target.checked = !e.target.checked;
+    say($("stats-on-msg"), errText(err), "bad");
+  }
+  renderStats();
+};
+
+$("stats-export").onclick = (e) => busy(e.currentTarget, async () => {
+  const msg = $("stats-export-msg");
+  try {
+    const p = await api("ExportStats");
+    say(msg, p ? "Saved to " + p : "", "ok");
+  } catch (err) {
+    say(msg, errText(err), "bad");
+  }
+});
+
+$("stats-reset").onclick = async (e) => {
+  const btn = e.currentTarget;
+  const msg = $("stats-reset-msg");
+  if (!btn.dataset.confirm) {
+    btn.dataset.confirm = "1";
+    btn.textContent = "Delete them";
+    say(msg, "Click again to delete every stat. This can't be undone.");
+    setTimeout(() => { delete btn.dataset.confirm; btn.textContent = "Reset stats"; say(msg, ""); }, 5000);
+    return;
+  }
+  delete btn.dataset.confirm;
+  btn.textContent = "Reset stats";
+  await busy(btn, async () => {
+    try { await api("ResetStats"); say(msg, ""); } catch (err) { say(msg, errText(err), "bad"); }
+    await loadStats();
+  });
+};
+
+// The typing test: type a short text, and the speed it took becomes what dictating is
+// compared with. Speed is the usual measure: five correct characters make a word.
+const typingTexts = [
+  "The kettle clicked off just as the rain started, so I made tea and sat by the window. Nothing on my list was urgent, and for once I let the afternoon go by without checking the time.",
+  "Most of what we write in a day is small: a reply, a note, a line in a document. None of it is hard to say out loud, yet each one waits for our hands to catch up with what we already know.",
+  "She packed the car before sunrise and left a note on the table. The road north was empty for the first hour, with fog in the low fields and a pale light coming up behind the hills.",
+  "A good tool gets out of the way. You stop thinking about how it works and think about the job, and at the end of the day you remember what you made, not what you made it with.",
+];
+let typing = null; // {text, typed, started, done}
+
+function openTyping() {
+  $("typing").hidden = false;
+  newTyping();
+  $("typing").scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function closeTyping() {
+  typing = null;
+  $("typing").hidden = true;
+}
+
+function newTyping() {
+  let text;
+  do { text = typingTexts[Math.floor(Math.random() * typingTexts.length)]; } while (typing && text === typing.text);
+  typing = { text, typed: "", started: 0, done: false, wpm: 0 };
+  $("typing-help").textContent = "Type the text below as you normally would. The clock starts with your first key and stops at the last one.";
+  say($("typing-result"), "");
+  $("typing-save").hidden = true;
+  drawTyping();
+  $("typing-text").focus({ preventScroll: true });
+}
+
+function drawTyping() {
+  const box = $("typing-text");
+  box.textContent = "";
+  const { text, typed } = typing;
+  [...text].forEach((ch, i) => {
+    const s = document.createElement("span");
+    s.textContent = ch;
+    if (i < typed.length) s.className = typed[i] === ch ? "ok" : "bad";
+    else if (i === typed.length && !typing.done) s.className = "cur";
+    box.append(s);
+  });
+}
+
+$("typing-text").addEventListener("keydown", (e) => {
+  if (!typing || typing.done || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === "Backspace") {
+    typing.typed = typing.typed.slice(0, -1);
+  } else if (e.key.length === 1) {
+    if (!typing.started) typing.started = performance.now();
+    typing.typed += e.key;
+  } else {
+    return;
+  }
+  e.preventDefault(); // Space would scroll the page
+  if (typing.typed.length >= typing.text.length) finishTyping();
+  drawTyping();
+});
+
+function finishTyping() {
+  const t = typing;
+  t.done = true;
+  const minutes = (performance.now() - t.started) / 60000;
+  const right = [...t.text].filter((ch, i) => t.typed[i] === ch).length;
+  const accuracy = right / t.text.length;
+  t.wpm = Math.round(right / 5 / minutes);
+  const res = $("typing-result");
+  if (accuracy < 0.85 || t.wpm < 5 || t.wpm > 300) {
+    say(res, "Too many slips for a fair reading. Try another text.", "bad");
+    return;
+  }
+  say(res, `${t.wpm} words a minute, ${Math.round(accuracy * 100)}% accurate.`);
+  $("typing-save").hidden = false;
+  $("typing-save").focus({ preventScroll: true });
+}
+
+$("stats-typing-open").onclick = openTyping;
+$("typing-close").onclick = closeTyping;
+$("typing-again").onclick = newTyping;
+$("typing-save").onclick = (e) => busy(e.currentTarget, async () => {
+  try {
+    await api("SetTypingSpeed", typing.wpm);
+    closeTyping();
+    await loadStats();
+  } catch (err) {
+    say($("typing-result"), errText(err), "bad");
+  }
+});
+
 // ---------- settings ----------
 
 function renderSettings() {
@@ -180,6 +582,9 @@ function renderSettings() {
   $("set-paste").checked = s.paste;
   $("set-paste").disabled = s.pasteForcedOff;
   $("set-login").checked = s.autostart;
+  $("set-updates").checked = s.updatesOn;
+  $("set-updates").disabled = !s.releaseBuild;
+  if (!s.releaseBuild) say($("set-updates-msg"), "This is a development build: it doesn't check for updates.");
   if (s.autostartOther && !s.autostart) {
     say($("set-login-msg"), "Another copy of Hearsay starts at login. Turn this on to start this one instead.");
   }
@@ -286,6 +691,25 @@ $("set-login").onchange = async (e) => {
     say($("set-login-msg"), errText(err), "bad");
   }
 };
+
+$("set-updates").onchange = async (e) => {
+  try {
+    await api("SetUpdates", e.target.checked);
+    await refresh();
+    say($("set-updates-msg"), "");
+  } catch (err) {
+    e.target.checked = !e.target.checked;
+    say($("set-updates-msg"), errText(err), "bad");
+  }
+};
+
+$("set-updates-now").onclick = (e) => busy(e.currentTarget, async () => {
+  try {
+    say($("set-updates-msg"), await api("CheckUpdate"), "ok");
+  } catch (err) {
+    say($("set-updates-msg"), errText(err), "bad");
+  }
+});
 
 // ---------- troubleshoot ----------
 
@@ -638,12 +1062,17 @@ Events.On("status", (ev) => {
   if (!state) return;
   state.status = ev.data;
   renderStatus(ev.data);
+  // A dictation just ended: the open Stats page counts it.
+  if (ev.data.state === "idle" && !$("page-stats").hidden && !$("main").hidden) loadStats();
 });
 Events.On("state", () => { if (state) refresh(); });
 
 await refresh();
 if (state.phone) {
   showMain();
+  // ?page=stats opens on that page (for the browser preview).
+  const page = new URLSearchParams(location.search).get("page");
+  if (page && $("page-" + page)) showPage(page);
   checkConnection();
 } else {
   openWizard("install", false);
