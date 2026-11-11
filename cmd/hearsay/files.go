@@ -26,6 +26,18 @@ type config struct {
 	Serial string `json:"serial,omitempty"`
 	// false: copy to the clipboard only, don't send Ctrl+V.
 	Paste *bool `json:"paste,omitempty"`
+	// Typing speed in words per minute from the window's typing test; the stats compare
+	// dictating with it. 0: never measured.
+	TypingWPM int `json:"typingWpm,omitempty"`
+	// false: dictations aren't counted for the Stats page.
+	Stats *bool `json:"stats,omitempty"`
+	// false: don't ask GitHub for new releases.
+	Updates *bool `json:"updates,omitempty"`
+	// The newest release a notification has been shown for (once per version).
+	UpdateSeen string `json:"updateSeen,omitempty"`
+	// The phone app version (versionCode) a "update the phone app" notification has been
+	// shown for.
+	PhoneUpdateSeen int64 `json:"phoneUpdateSeen,omitempty"`
 	// The paired phone, written by `hearsay pair` (and setup).
 	Phone *pairedPhone `json:"phone,omitempty"`
 }

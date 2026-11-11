@@ -18,6 +18,7 @@ func (a *app) requireKeyboard() error {
 
 func (a *app) listening() {
 	a.logf("listening")
+	markListening()
 	a.status("listening", "")
 	a.notify("Listening… press again to paste", 2000, false)
 }

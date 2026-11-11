@@ -58,6 +58,8 @@ type app struct {
 	stdout  bool      // print the dictated text (a CLI run, not the tray)
 	heard   string    // the text the last stop brought back
 	copied  bool      // whether that text got onto the clipboard
+	noStats bool      // a test dictation: keep it out of the stats
+	asked   time.Time // when the current request was made (stats.go)
 
 	// Windows has no notifications here: errors from a press nobody can see (no terminal,
 	// no tray) are kept in unseen and shown in a message box when the press is over.

@@ -714,8 +714,8 @@ func (a *app) testStop() (testResult, error) {
 	var r testResult
 	err := a.action(func() error {
 		paste := a.paste
-		a.paste = false
-		defer func() { a.paste = paste }()
+		a.paste, a.noStats = false, true
+		defer func() { a.paste, a.noStats = paste, false }()
 		a.heard, a.copied = "", false
 		err := a.stop(true)
 		r = testResult{a.heard, a.copied}
